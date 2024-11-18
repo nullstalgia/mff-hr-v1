@@ -40,6 +40,12 @@ esp-idf-sys = { version = "0.35", default-features = false }
 esp32-nimble = "0.8.2"
 anyhow = "1.0.93"
 bstr = "1.11.0"
+embedded-graphics = "0.8.1"
+# ili9341 = "0.6.0"
+display-interface = "0.5.0"
+display-interface-spi = "0.5.0"
+embedded-hal = "1.0.0"
+mipidsi = "0.8.0"
 
 [build-dependencies]
 embuild = { version = "0.32.0", features = ["espidf"] }
