@@ -17,6 +17,10 @@ opt-level = "s"
 debug = true    # Symbols are nice and they don't increase the size on Flash
 opt-level = "z"
 
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["components"]
+bindings_header = "src/bindings.h"
+
 [features]
 default = ["std", "embassy", "esp-idf-svc/native"]
 
@@ -55,6 +59,8 @@ xpt2046 = { path = "xpt2046" }
 # ] }
 # touchscreen = { path = "touchscreen", features = ["xpt2046"] }
 embedded-canvas = "0.3.1"
+postcard = "1.0.10"
+cstr = "0.2.12"
 
 [build-dependencies]
 embuild = { version = "0.32.0", features = ["espidf"] }

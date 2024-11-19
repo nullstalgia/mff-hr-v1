@@ -26,6 +26,9 @@ where
             calibration,
         }
     }
+    pub fn calibrated(&self) -> bool {
+        self.calibration.is_some()
+    }
 }
 
 fn out_of_range((x, y): (u16, u16)) -> bool {

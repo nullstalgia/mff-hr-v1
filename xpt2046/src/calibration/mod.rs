@@ -16,6 +16,7 @@ use embedded_graphics::{
 #[cfg(feature = "with_defmt")]
 use defmt::{write, Format, Formatter};
 use embedded_hal::{delay::DelayNs, spi::SpiDevice};
+use serde_derive::{Deserialize, Serialize};
 
 use crate::{TouchEvent, TouchScreen};
 
@@ -66,7 +67,7 @@ impl Default for CalibrationSet {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CalibrationData {
     pub alpha_x: f64,
     pub beta_x: f64,

@@ -20,8 +20,14 @@ use mipidsi::{
     Builder,
 };
 
+mod littlefs;
 mod touch_calibrate;
 // mod xpt2046;
+
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -32,6 +38,8 @@ fn main() -> anyhow::Result<()> {
         esp_idf_hal::cpu::core(),
         unsafe { esp_idf_hal::sys::esp_get_free_heap_size() }
     );
+
+    littlefs::init_littlefs_storage()?;
 
     // use xpt2046::Xpt2046;
 
@@ -93,20 +101,40 @@ fn main() -> anyhow::Result<()> {
         &SpiDriverConfig::new(),
     )?;
 
-    use xpt2046::TouchScreen;
-    use xpt2046::Xpt2046;
+    use xpt2046::{CalibrationData, TouchScreen, Xpt2046};
 
     let touch_config = esp_idf_hal::spi::config::Config::new().baudrate(2.MHz().into());
     let spi_touch = SpiDeviceDriver::new(&vspi_driver, Some(touch_cs), &touch_config)?;
-    let mut touch = Xpt2046::new(spi_touch, None);
+
+    let touch_path = PathBuf::from("/littlefs/touch_cal");
+    let touch_calibration: Option<CalibrationData> = {
+        if !touch_path.exists() {
+            None
+        } else {
+            let data = fs::read(&touch_path)?;
+            if let Ok(data) = postcard::from_bytes::<CalibrationData>(&data) {
+                Some(data)
+            } else {
+                error!("Failed to deserialize touch calibration!");
+                None
+            }
+        }
+    };
+
+    let mut touch = Xpt2046::new(spi_touch, touch_calibration);
 
     use esp_idf_hal::units::*;
 
     assert_eq!(unsafe { esp_idf_hal::sys::esp_task_wdt_deinit() }, 0);
 
-    let output = touch.intrusive_calibration(&mut display, &mut delay)?;
-
-    info!("{output:#?}");
+    if !touch.calibrated() {
+        let output = touch.intrusive_calibration(&mut display, &mut delay)?;
+        info!("{output:#?}");
+        fs::write(
+            touch_path,
+            postcard::to_vec::<CalibrationData, 512>(&output)?,
+        )?;
+    }
 
     let mut position = Point::new(00, 50);
     let style = MonoTextStyle::new(&FONT_6X10, Rgb565::RED);

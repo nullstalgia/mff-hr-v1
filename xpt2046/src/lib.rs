@@ -1,6 +1,7 @@
 #![no_std]
 
 mod calibration;
+pub use calibration::CalibrationData;
 mod errors;
 mod xpt2046;
 use embedded_graphics::prelude::Point;
