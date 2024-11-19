@@ -45,7 +45,16 @@ embedded-graphics = "0.8.1"
 display-interface = "0.5.0"
 display-interface-spi = "0.5.0"
 embedded-hal = "1.0.0"
+# For display driver impl, ST7789
 mipidsi = "0.8.0"
+# For touch screen impl, XPT2046
+# xpt2046 = { git = "https://github.com/Yandrik/xpt2046", rev = "8d8cf94" }
+xpt2046 = { path = "xpt2046" }
+# touchscreen = { git = "https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display", rev = "c1a48ea", package = "touchscreen", features = [
+#     "xpt2046",
+# ] }
+# touchscreen = { path = "touchscreen", features = ["xpt2046"] }
+embedded-canvas = "0.3.1"
 
 [build-dependencies]
 embuild = { version = "0.32.0", features = ["espidf"] }

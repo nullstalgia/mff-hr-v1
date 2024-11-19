@@ -1,0 +1,10 @@
+[package]
+name = "xpt2046"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+embedded-canvas = "0.3.1"
+embedded-graphics = "0.8.1"
+embedded-hal = "1.0.0"
+thiserror = { version = "2", default-features = false }
