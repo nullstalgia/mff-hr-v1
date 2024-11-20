@@ -1,3 +1,9 @@
+// Yoinked from https://github.com/arashsm79/OFMon/blob/afca7d019f3e7efe79879b72dbd4a7d22d660c2d/src/main.rs
+
+pub mod paths {
+    pub const TOUCH_CAL_PATH: &str = "/littlefs/touch_cal";
+}
+
 /// Initializes a littlefs file system.
 ///
 /// A partition with name `LITTLEFS_PARTITION_NAME` has to be specified
