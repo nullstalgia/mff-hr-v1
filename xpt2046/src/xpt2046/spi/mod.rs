@@ -45,6 +45,8 @@ impl<SPI: SpiDevice> Spi<SPI> {
         //     }
         // }
 
+        // log::info!("{buf:?}");
+
         Ok((
             u16::from_be_bytes([buf[1], buf[2]]),
             u16::from_be_bytes([buf[3], buf[4]]),

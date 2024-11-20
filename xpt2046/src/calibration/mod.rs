@@ -1,10 +1,12 @@
 use crate::{xpt2046::Xpt2046, TouchKind};
 
-use embedded_canvas::CCanvas;
+// use embedded_canvas::CCanvas;
 use embedded_graphics::{
+    mono_font::{ascii::FONT_6X10, MonoTextStyle},
     pixelcolor::Rgb565,
     prelude::*,
     primitives::{Circle, Line, Primitive, PrimitiveStyle},
+    text::{Alignment, Text},
     Drawable,
 };
 // use embedded_graphics_core::{
@@ -96,14 +98,8 @@ const CALIBRATION_POINTS: &[Point; 3] = &[
     Point::new(167, 214),
 ];
 
-pub fn calibration_math(
-    // screen_space_points: &CalibrationSet,
-    touch_space_points: &CalibrationSet,
-    // screen_size: Size,
-) -> CalibrationData {
+pub fn calibration_math(touch_space_points: &CalibrationSet) -> CalibrationData {
     let screen_space_points: CalibrationSet = Default::default();
-    // screenWidth  = sW;
-    // screenHeight = sH;
 
     // Just shortening names for easier reading
     let screen = screen_space_points;
@@ -151,7 +147,6 @@ pub fn calibration_math(
 impl<SPI> Xpt2046<SPI>
 where
     SPI: SpiDevice,
-    // CALIB: Fn((u16, u16)) -> Option<(i32, i32)>,
 {
     /// Takes over the screen to calibrate touch input.
     pub fn intrusive_calibration<DRAW, DELAY>(
@@ -164,20 +159,27 @@ where
         DELAY: DelayNs,
     {
         let mut points_tapped = 0;
-        // let mut retry = 3;
         let mut given_input = CalibrationSet::default();
 
-        // let old_cp = self.calibration_point.clone();
         // Prepare the screen for points
         let _ = dt.clear(Rgb565::BLACK);
 
+        // Create a new character style
+        let style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
+
+        // This should maybe be part of a builder for this whole struct, passing in
+        // a font through the generics system.
+        _ = Text::with_alignment(
+            "Touchscreen Calibration\nTap the dots carefully, 3 total.",
+            Point::new(320 / 2, 240 / 2),
+            style,
+            Alignment::Center,
+        )
+        .draw(dt);
+
         let mut is_pressed: bool = false;
 
-        // Set correct state to fetch raw data from touch controller
-        // self.operation_mode = TouchScreenOperationMode::CALIBRATION;
         while points_tapped < 4 {
-            // We must run our state machine to capture user input
-            // (run)(self)?;
             let latest_event = self.get_touch_event()?;
             let latest_event_kind: Option<&TouchKind> = latest_event.as_ref().map(|e| &e.kind);
             match points_tapped {
@@ -217,46 +219,20 @@ where
                 }
 
                 3 => {
-                    // Create new calibration point from the captured samples
-                    // self.calibration_point = CalibrationPoint {
-                    //     a: new_a,
-                    //     b: new_b,
-                    //     c: new_c,
-                    // };
-                    // and then re-caculate calibration
-                    // match calibration_math(&given_input) {
-                    //     Ok(new_calibration_data) => {
-                    //         self.calibration_data = new_calibration_data;
-                    //         points_tapped += 1;
-                    //     }
-                    //     Err(e) => {
-                    //         // We have problem calculating new values
-                    //         if retry == 0 {
-                    //             return Err(Error::Calibration(e));
-                    //         }
-                    //         /*
-                    //          * If out calculation failed lets retry
-                    //          */
-                    //         retry -= 1;
-                    //         points_tapped = 0;
-
-                    //         let _ = dt.clear(Rgb565::BLACK);
-                    //     }
-                    // }
                     _ = dt.clear(Rgb565::BLACK);
                     self.calibration = Some(calibration_math(&given_input));
                     return Ok(self.calibration.clone().unwrap());
                 }
                 _ => (),
             }
+            delay.delay_ms(10);
         }
 
         unreachable!()
-
-        // Ok(())
     }
 }
 
+/// This flickers if drawn without a framebuffer/canvas.
 fn calibration_draw_point<DT: DrawTarget<Color = Rgb565>>(dt: &mut DT, p: &Point, pressed: bool) {
     let color = if pressed { Rgb565::RED } else { Rgb565::BLUE };
 

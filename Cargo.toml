@@ -61,6 +61,11 @@ xpt2046 = { path = "xpt2046" }
 embedded-canvas = "0.3.1"
 postcard = "1.0.10"
 cstr = "0.2.12"
+# embedded-text = { version = "0.7.2", features = ["ansi"] }
+# embedded-menu = "0.6.1"
+# gfx-xtra = "0.2.0"
+kolibri-embedded-gui = "0.0.0-alpha.1"
+bitbang-hal = { path = "bitbang-hal-fork" }
 
 [build-dependencies]
 embuild = { version = "0.32.0", features = ["espidf"] }
