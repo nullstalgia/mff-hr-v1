@@ -38,5 +38,7 @@ jobs:
           ldproxy: true
       - name: Enable caching
         uses: Swatinem/rust-cache@v2
+      - name: Patch idf-svc
+        run: cargo run --manifest-path ./cargo-patch-crate-fork/Cargo.toml --target x86_64-unknown-linux-gnu
       - name: Run command
         run: cargo ${{ matrix.action.command }} ${{ matrix.action.args }}
