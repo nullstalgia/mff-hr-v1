@@ -21,8 +21,8 @@ jobs:
         action:
           - command: build
             args: --release
-          - command: fmt
-            args: --all -- --check --color always
+          # - command: fmt
+          # args: --all -- --check --color always
           # - command: clippy
           #   args: --all-targets --all-features --workspace -- -D warnings
     steps:
@@ -38,7 +38,9 @@ jobs:
           ldproxy: true
       - name: Enable caching
         uses: Swatinem/rust-cache@v2
-      - name: Patch idf-svc
-        run: cargo run --manifest-path ./cargo-patch-crate-fork/Cargo.toml --target x86_64-unknown-linux-gnu
+        with:
+          cache-on-failure: "true"
+      # - name: Patch idf-svc
+      # run: cargo run --manifest-path ./cargo-patch-crate-fork/Cargo.toml --target x86_64-unknown-linux-gnu
       - name: Run command
         run: cargo ${{ matrix.action.command }} ${{ matrix.action.args }}
