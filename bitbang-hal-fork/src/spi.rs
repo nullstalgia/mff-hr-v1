@@ -122,6 +122,12 @@ where
         Ok(spi)
     }
 
+    /// `build`s with a pre-set `delay_ns`
+    pub fn with_delay_ns(mut self, delay: u32) -> Self {
+        self.delay_ns = delay;
+        self
+    }
+
     /// Set transmission bit order
     pub fn set_bit_order(&mut self, order: BitOrder) {
         self.bit_order = order;
@@ -238,8 +244,6 @@ where
     E: Debug + Display,
     Delay: DelayNs,
 {
-    // type Error = crate::spi::Error<E>;
-
     fn transaction(
         &mut self,
         operations: &mut [embedded_hal::spi::Operation<'_, u8>],
@@ -251,21 +255,22 @@ where
         for op in operations {
             match op {
                 DelayNs(ns) => self.delay.delay_ns(*ns),
-                Read(buf) => {
-                    for byte in buf.iter_mut() {
+                Read(miso) => {
+                    for byte in miso.iter_mut() {
                         *byte = self.read_byte()?;
                     }
                 }
-                Write(buf) => {
-                    for byte in buf.iter() {
+                Write(mosi) => {
+                    for byte in mosi.iter() {
                         self.write_byte(*byte)?
                     }
                 }
-                Transfer(read_from, write_to) => {
-                    for (read_byte, write_byte) in read_from.iter_mut().zip(write_to.iter()) {
-                        self.write_byte(*write_byte)?;
-                        *read_byte = self.read_byte()?;
-                    }
+                Transfer(_miso, _mosi) => {
+                    unimplemented!()
+                    // for (read_byte, write_byte) in read_from.iter_mut().zip(write_to.iter()) {
+                    //     self.write_byte(*write_byte)?;
+                    //     *read_byte = self.read_byte()?;
+                    // }
                 }
                 TransferInPlace(buf) => {
                     for byte in buf.iter_mut() {
@@ -295,25 +300,3 @@ where
 {
     type Error = Error<E>;
 }
-
-// impl<Miso, Mosi, Sck, Cs, Delay, E> embedded_hal::blocking::spi::transfer::Default<u8>
-//     for SPI<Miso, Mosi, Sck, Cs, Delay>
-// where
-//     Miso: InputPin<Error = E>,
-//     Mosi: OutputPin<Error = E>,
-//     Sck: OutputPin<Error = E>,
-//     Cs: OutputPin<Error = E>,
-//     Delay: DelayNs,
-// {
-// }
-
-// impl<Miso, Mosi, Sck, Cs, Delay, E> embedded_hal::blocking::spi::write::Default<u8>
-//     for SPI<Miso, Mosi, Sck, Cs, Delay>
-// where
-//     Miso: InputPin<Error = E>,
-//     Mosi: OutputPin<Error = E>,
-//     Sck: OutputPin<Error = E>,
-//     Cs: OutputPin<Error = E>,
-//     Delay: DelayNs,
-// {
-// }

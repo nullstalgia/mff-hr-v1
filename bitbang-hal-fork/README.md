@@ -1,6 +1,8 @@
 # `embedded-hal` traits implementation by bit banging
 
-# My edits are turning the timer into a Delay input
+### You probably shouldn't use this as-is.
+
+I made this to just work for my one module one time and that it, I'd recommend cleaning it up and testing stuff more if you use it (if I don't get to it first).
 
 [![crates.io](https://img.shields.io/crates/v/bitbang-hal.svg)](https://crates.io/crates/bitbang-hal)
 [![Docs](https://docs.rs/bitbang-hal/badge.svg)](https://docs.rs/bitbang-hal)

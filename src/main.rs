@@ -116,15 +116,8 @@ fn main() -> anyhow::Result<()> {
     };
     use embedded_graphics::prelude::*;
 
-    use bitbang_hal::spi::Spi;
-    use bitbang_hal::spi::MODE_0;
-
-    // use
-
-    let timg0 = peripherals.timer00;
-
-    let mut bitbang_spi = Spi::build(
-        MODE_0,
+    let bitbang_spi = bitbang_hal::spi::Spi::build(
+        bitbang_hal::spi::MODE_0,
         touch_miso,
         touch_mosi,
         touch_clk,
@@ -132,7 +125,8 @@ fn main() -> anyhow::Result<()> {
         delay.clone(),
     )?;
     // Just testing setting delay, works w/o
-    bitbang_spi.set_delay_ns(100000);
+    let bitbang_spi = bitbang_spi.with_delay_ns(100000);
+    // bitbang_spi.set_delay_ns(100000);
 
     // let vspi_driver = SpiDriver::new::<SPI>(
     //     vspi,
@@ -184,8 +178,8 @@ fn main() -> anyhow::Result<()> {
                         match touch_tx.try_send(event) {
                             Ok(()) => (),
                             // If it's full, lets just block until we *can* send more.
-                            Err(TrySendError::Full(event)) => touch_tx.send(event).unwrap(),
-                            Err(TrySendError::Disconnected(_)) => panic!(),
+                            Err(TrySendError::Full(event)) => (),
+                            Err(TrySendError::Disconnected(_)) => (),
                         }
                     }
                     Err(e) => {
@@ -197,6 +191,47 @@ fn main() -> anyhow::Result<()> {
         })?;
 
     assert_eq!(unsafe { esp_idf_hal::sys::esp_task_wdt_deinit() }, 0);
+
+    use esp_idf_svc::fs::fatfs::Fatfs;
+    use esp_idf_svc::hal::gpio::AnyIOPin;
+    use esp_idf_svc::hal::prelude::*;
+    use esp_idf_svc::hal::sd::{spi::SdSpiHostDriver, SdCardConfiguration, SdCardDriver};
+    use esp_idf_svc::hal::spi::{config::DriverConfig, Dma, SpiDriver};
+    use esp_idf_svc::io::vfs::MountedFatfs;
+    use esp_idf_svc::log::EspLogger;
+
+    let sd_cs = peripherals.pins.gpio5;
+    let sd_sck = peripherals.pins.gpio18;
+    let sd_miso = peripherals.pins.gpio19;
+    let sd_mosi = peripherals.pins.gpio23;
+
+    let spi_driver = SpiDriver::new(
+        vspi,
+        sd_sck,
+        sd_mosi,
+        Some(sd_miso),
+        &DriverConfig::default().dma(Dma::Auto(4096)),
+    )?;
+
+    let sd_card_driver = SdCardDriver::new_spi(
+        SdSpiHostDriver::new(
+            spi_driver,
+            Some(sd_cs),
+            AnyIOPin::none(),
+            AnyIOPin::none(),
+            AnyIOPin::none(),
+            None,
+        )?,
+        &SdCardConfiguration::new(),
+    )?;
+
+    // Keep it around or else it will be dropped and unmounted
+    let _mounted_fatfs = MountedFatfs::mount(Fatfs::new_sdcard(0, sd_card_driver)?, "/sdcard", 4)?;
+
+    info!("BB");
+    let text = fs::read_to_string("/sdcard/meow.txt")?;
+
+    info!("{text}");
 
     let mut last_point = None;
 

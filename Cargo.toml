@@ -22,7 +22,7 @@ component_dirs = ["components"]
 bindings_header = "src/bindings.h"
 
 [features]
-default = ["std", "embassy", "esp-idf-svc/native"]
+default = ["std", "embassy", "esp-idf-svc/native", "experimental"]
 
 pio = ["esp-idf-svc/pio"]
 std = ["alloc", "esp-idf-svc/binstart", "esp-idf-svc/std"]
@@ -36,10 +36,24 @@ embassy = [
 ]
 
 
+[patch.crates-io]
+# esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc", rev = "ad1c836718ad5abf6cf09b155b791d8fe7efd571" }
+esp-idf-svc = { path = "./target/patch/ad1c836" }
+# esp-idf-svc = { path = "../esp-idf-svc" }
+esp-idf-hal = { git = "https://github.com/esp-rs/esp-idf-hal", rev = "72f6448c6498fb3f1234db1ff5c59a2febed5ca5" }
+
+# This crate gets patched before build
+# [package.metadata.patch]
+# crates = ["esp-idf-svc"]
+
 [dependencies]
 log = "0.4"
-esp-idf-svc = { version = "0.49", default-features = false }
-esp-idf-hal = { version = "0.44", default-features = false }
+# esp-idf-svc = { version = "0.49", default-features = false }
+# esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc", rev = "ad1c836718ad5abf6cf09b155b791d8fe7efd571", default-features = false }
+esp-idf-svc = { path = "./target/patch/ad1c836" }
+# esp-idf-svc = { path = "../esp-idf-svc" }
+# esp-idf-hal = { version = "0.44", default-features = false }
+esp-idf-hal = { git = "https://github.com/esp-rs/esp-idf-hal", rev = "72f6448c6498fb3f1234db1ff5c59a2febed5ca5", default-features = false }
 esp-idf-sys = { version = "0.35", default-features = false }
 esp32-nimble = "0.8.2"
 anyhow = "1.0.93"
@@ -69,4 +83,6 @@ bitbang-hal = { path = "bitbang-hal-fork" }
 
 [build-dependencies]
 embuild = { version = "0.32.0", features = ["espidf"] }
-cc = "=1.1.30"                                          # Necessary until a new version of `esp-idf-sys` is released
+cc = "=1.1.30"                                          # Necessary until a new version of `esp-idf-sys` is released (not my comment)
+# patch-crate = "0.1"                                     # Used to `log` -> `::log` in `esp-idf-svc`
+patch-crate = { path = "./cargo-patch-crate-fork" }
