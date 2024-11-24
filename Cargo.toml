@@ -22,7 +22,7 @@ component_dirs = ["components"]
 bindings_header = "src/bindings.h"
 
 [features]
-default = ["std", "embassy", "esp-idf-svc/native", "experimental"]
+default = ["std", "esp-idf-svc/native", "experimental"]
 
 pio = ["esp-idf-svc/pio"]
 std = ["alloc", "esp-idf-svc/binstart", "esp-idf-svc/std"]
@@ -39,10 +39,10 @@ embassy = [
 # esp-idf-svc = { path = "./target/patch/ad1c836" }
 
 [patch.crates-io]
-esp-idf-svc = { git = "https://github.com/nullstalgia/esp-idf-svc", rev = "1f2c2c253acc11aa71946c31a1ce38ff4fffc067" }
+esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc", rev = "3f2ce04" }
 # esp-idf-svc = { path = "./target/patch/ad1c836" }
 # esp-idf-svc = { path = "../esp-idf-svc" }
-esp-idf-hal = { git = "https://github.com/esp-rs/esp-idf-hal", rev = "72f6448c6498fb3f1234db1ff5c59a2febed5ca5" }
+esp-idf-hal = { git = "https://github.com/esp-rs/esp-idf-hal", rev = "97c01ef" }
 
 # This crate gets patched before build
 # [package.metadata.patch]
@@ -51,11 +51,11 @@ esp-idf-hal = { git = "https://github.com/esp-rs/esp-idf-hal", rev = "72f6448c64
 [dependencies]
 log = "0.4"
 # esp-idf-svc = { version = "0.49", default-features = false }
-esp-idf-svc = { git = "https://github.com/nullstalgia/esp-idf-svc", rev = "1f2c2c253acc11aa71946c31a1ce38ff4fffc067", default-features = false }
+esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc", rev = "3f2ce04", default-features = false }
 # esp-idf-svc = { path = "./target/patch/ad1c836" }
 # esp-idf-svc = { path = "../esp-idf-svc" }
 # esp-idf-hal = { version = "0.44", default-features = false }
-esp-idf-hal = { git = "https://github.com/esp-rs/esp-idf-hal", rev = "72f6448c6498fb3f1234db1ff5c59a2febed5ca5", default-features = false }
+esp-idf-hal = { git = "https://github.com/esp-rs/esp-idf-hal", rev = "97c01ef", default-features = false }
 esp-idf-sys = { version = "0.35", default-features = false }
 esp32-nimble = "0.8.2"
 anyhow = "1.0.93"
@@ -82,6 +82,11 @@ cstr = "0.2.12"
 # gfx-xtra = "0.2.0"
 # kolibri-embedded-gui = "0.0.0-alpha.1"
 bitbang-hal = { path = "bitbang-hal-fork" }
+# tinygif = { path = "./tinygif" }
+# tinygif = "0.0.4"
+tinygif = { git = "https://github.com/neil-morrison44/tinygif", branch = "nm/fill_contiguous" }
+gift = "0.10.6"
+pix = "0.13.4"
 
 [build-dependencies]
 embuild = { version = "0.32.0", features = ["espidf"] }

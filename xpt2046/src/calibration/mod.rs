@@ -15,12 +15,12 @@ use embedded_graphics::{
 //     pixelcolor::{Rgb565, RgbColor},
 // };
 
-#[cfg(feature = "with_defmt")]
-use defmt::{write, Format, Formatter};
+// #[cfg(feature = "with_defmt")]
+// use defmt::{write, Format, Formatter};
 use embedded_hal::{delay::DelayNs, spi::SpiDevice};
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{TouchEvent, TouchScreen};
+use crate::TouchScreen;
 
 // A lot of logic yoinked from:
 // https://github.com/ardnew/XPT2046_Calibrated/blob/8d3f8b518b617b6fbc870ef3229b27aa83028c56/src/XPT2046_Calibrated.cpp
@@ -28,7 +28,7 @@ use crate::{TouchEvent, TouchScreen};
 // https://github.com/Yandrik/xpt2046/blob/8d8cf9481268f61580e3dccf90717bbbeb50aa99/src/calibration.rs
 // and ancestors
 #[derive(Copy, Clone, Debug, Default)]
-#[cfg_attr(feature = "defmt", derive(::defmt::Format))]
+// #[cfg_attr(feature = "defmt", derive(::defmt::Format))]
 pub struct CalibrationPoint {
     /// The x coordinate.
     pub x: f64,
