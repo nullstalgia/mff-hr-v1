@@ -46,7 +46,7 @@ where
     username_scratch: String,
     settings: Settings,
     // ble_handle: BleHrHandle,
-    ble_stuff: BleStuff<'a>,
+    ble: BleStuff<'a>,
 }
 
 #[derive(Default)]
@@ -57,7 +57,7 @@ struct Lines {
 
 pub enum AppView {
     MainMenu,
-    BadgeDisplay(DisplayType),
+    BadgeDisplay,
     Doodle,
     HrSelect,
     NameInput,
@@ -65,11 +65,11 @@ pub enum AppView {
     ResetSettings,
 }
 
-pub enum DisplayType {
-    Name,
-    Heartrate,
-    Both,
-}
+// pub enum DisplayType {
+//     Name,
+//     Heartrate,
+//     Both,
+// }
 
 const INPUT_CHARS: &[char] = &[
     ' ', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R',
@@ -102,7 +102,7 @@ where
             username_scratch: String::new(),
             settings: Settings::littlefs_load()?,
             // ble_handle: BleHrHandle::build()?,
-            ble_stuff: BleStuff::build(),
+            ble: BleStuff::build(),
         })
     }
     pub fn doodle(&mut self) -> Result<()> {
@@ -275,7 +275,7 @@ where
                 {
                     info!("{choice} at {point}");
                     match choice {
-                        // MainMenu::Start => self.change_view(AppView::BadgeDisplay(())),
+                        MainMenu::Start => self.change_view(AppView::BadgeDisplay)?,
                         MainMenu::NameInput => self.change_view(AppView::NameInput)?,
                         MainMenu::HrSelect => self.change_view(AppView::HrSelect)?,
                         // MainMenu::HrSelect => self.ble_stuff.scan_for_select(),
@@ -489,8 +489,7 @@ where
                         info!("NameBot!");
                     }
                     string_dingle(&mut self.username_scratch, index, !is_top_half);
-                    self.view_needs_painting = true;
-                    self.display.fill_solid(&char_area, Rgb565::BLACK)?;
+                    self.repaint_full()?;
                     // self.change_view(AppView::NameInput);
                 }
                 self.debounce_instant = Instant::now();
@@ -516,8 +515,7 @@ where
                         self.username_scratch.pop();
                     }
                 }
-                self.view_needs_painting = true;
-                self.display.clear(Rgb565::BLACK)?;
+                self.repaint_full()?;
                 self.debounce_instant = Instant::now();
                 // self.change_view(AppView::NameInput);
                 info!("Len! {is_add}");
@@ -547,7 +545,7 @@ where
     }
     fn hr_select(&mut self) -> Result<()> {
         let has_hr_saved = self.settings.hr.saved.is_some();
-        let monitors_discovered = !self.ble_stuff.discovered.is_empty();
+        let monitors_discovered = !self.ble.discovered.is_empty();
 
         const BACK_BUTTON_BOUND: Rectangle =
             Rectangle::new(Point::new(290, 0), Size::new_equal(24));
@@ -604,8 +602,8 @@ where
 
                 let text = format!(
                     "Select HR Monitor\n{index}/{total}",
-                    index = self.ble_stuff.chosen_discovered + 1,
-                    total = self.ble_stuff.discovered.len()
+                    index = self.ble.chosen_discovered + 1,
+                    total = self.ble.discovered.len()
                 );
 
                 Text::with_text_style(&text, Point::new(160, 15), title_style, text_style)
@@ -613,10 +611,10 @@ where
 
                 let device = {
                     let (mac, name) = self
-                        .ble_stuff
+                        .ble
                         .discovered
                         .iter()
-                        .nth(self.ble_stuff.chosen_discovered)
+                        .nth(self.ble.chosen_discovered)
                         .unwrap();
                     BleIdents {
                         mac: *mac,
@@ -684,8 +682,7 @@ where
                 info!("Trashing saved device!");
                 self.settings.hr.saved = None;
                 self.settings.littlefs_save()?;
-                self.view_needs_painting = true;
-                self.display.clear(Rgb565::BLACK)?;
+                self.repaint_full()?;
                 return Ok(());
             }
             Some(TouchEvent {
@@ -694,10 +691,10 @@ where
             }) if SAVE_BUTTON_BOUND.contains(*point) && monitors_discovered => {
                 let device = {
                     let (mac, name) = self
-                        .ble_stuff
+                        .ble
                         .discovered
                         .iter()
-                        .nth(self.ble_stuff.chosen_discovered)
+                        .nth(self.ble.chosen_discovered)
                         .unwrap();
                     BleIdents {
                         mac: *mac,
@@ -723,11 +720,11 @@ where
             }) if LEFT_BUTTON_BOUND.contains(*point) && monitors_discovered => {
                 self.display.clear(Rgb565::BLACK)?;
 
-                if let None = self.ble_stuff.chosen_discovered.checked_sub(1) {
-                    self.ble_stuff.chosen_discovered = self.ble_stuff.discovered.len() - 1;
+                if let None = self.ble.chosen_discovered.checked_sub(1) {
+                    self.ble.chosen_discovered = self.ble.discovered.len() - 1;
                 }
 
-                self.view_needs_painting = true;
+                self.repaint();
                 return Ok(());
             }
             Some(TouchEvent {
@@ -736,12 +733,12 @@ where
             }) if RIGHT_BUTTON_BOUND.contains(*point) && monitors_discovered => {
                 self.display.clear(Rgb565::BLACK)?;
 
-                self.ble_stuff.chosen_discovered += 1;
-                if self.ble_stuff.chosen_discovered >= self.ble_stuff.discovered.len() {
-                    self.ble_stuff.chosen_discovered = 0;
+                self.ble.chosen_discovered += 1;
+                if self.ble.chosen_discovered >= self.ble.discovered.len() {
+                    self.ble.chosen_discovered = 0;
                 }
 
-                self.view_needs_painting = true;
+                self.repaint();
                 return Ok(());
             }
             _ => (),
@@ -768,8 +765,7 @@ where
         Ok(())
     }
     fn change_view(&mut self, new_view: AppView) -> Result<()> {
-        self.display.clear(Rgb565::BLACK)?;
-        self.view_needs_painting = true;
+        self.repaint_full()?;
         self.view = new_view;
         self.debounce_instant = Instant::now();
 
@@ -779,7 +775,10 @@ where
                 self.debounce_duration = Duration::from_millis(100);
                 self.username_scratch.clone_from(&self.settings.username);
             }
-            AppView::MainMenu => self.debounce_duration = Duration::from_millis(500),
+            AppView::MainMenu => {
+                self.ble.discovered.clear();
+                self.debounce_duration = Duration::from_millis(500);
+            }
             AppView::HrSelect => {
                 let character_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
                 let text_style = TextStyleBuilder::new().alignment(Alignment::Center).build();
@@ -792,15 +791,25 @@ where
                 )
                 .draw(&mut self.display)?;
 
-                self.ble_stuff.discovered =
-                    block_on(async { self.ble_stuff.scan_for_select().await })?;
+                self.ble.discovered = block_on(async { self.ble.scan_for_select().await })?;
 
-                self.ble_stuff.chosen_discovered = 0;
+                info!("{:?}", self.ble.discovered);
 
-                info!("{:?}", self.ble_stuff.discovered);
+                // Filtering out all the nameless monitors
+                // (easy enough to just have the user rescan)
+                self.ble.discovered.retain(|_, name| !name.is_empty());
 
-                self.display.clear(Rgb565::BLACK)?;
+                self.ble.chosen_discovered = 0;
+
+                // Repaint again since we drew here
+                self.repaint_full()?;
                 // self.change_view(AppView::MainMenu)?;
+            }
+            AppView::BadgeDisplay => {
+                if let Some(addr) = self.settings.hr.saved.as_ref() {
+                    block_on(async { self.ble.connect_to_monitor(addr.mac).await })?;
+                }
+                info!("Done.");
             }
             _ => (),
         }
@@ -832,6 +841,17 @@ where
         }
 
         &self.last_touch
+    }
+    /// Only sets the `view_needs_painting` flag to `true`.
+    fn repaint(&mut self) {
+        self.view_needs_painting = true;
+        // Ok(())
+    }
+    /// Full clears the display and sets the `view_needs_painting` flag to `true`.
+    fn repaint_full(&mut self) -> Result<()> {
+        self.repaint();
+        self.display.clear(Rgb565::BLACK)?;
+        Ok(())
     }
     /// Just to make sure I don't forget any part of the logic.
     ///

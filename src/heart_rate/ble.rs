@@ -5,7 +5,7 @@ use std::{
 
 use crate::errors::Result;
 use bstr::ByteSlice;
-use esp32_nimble::{utilities::BleUuid, uuid128, BLEClient, BLEDevice, BLEScan};
+use esp32_nimble::{utilities::BleUuid, uuid128, BLEAddress, BLEClient, BLEDevice, BLEScan};
 use esp_idf_hal::delay::Delay;
 use esp_idf_svc::hal::{
     prelude::Peripherals,
@@ -115,15 +115,21 @@ pub struct BleStuff<'a> {
     host_device: &'a mut BLEDevice,
     pub discovered: Monitors,
     pub chosen_discovered: usize,
-    discovered_rx: Option<Receiver<BleIdents>>,
+    pub monitor: BLEClient,
+    // discovered_rx: Option<Receiver<BleIdents>>,
 }
 impl<'a> BleStuff<'a> {
     pub fn build() -> Self {
+        let mut monitor = BLEClient::new();
+        monitor.on_connect(|client| {
+            client.update_conn_params(120, 120, 0, 60).unwrap();
+        });
         Self {
             host_device: BLEDevice::take(),
             discovered: Monitors::new(),
             chosen_discovered: 0,
-            discovered_rx: None,
+            monitor,
+            // discovered_rx: None,
         }
     }
     pub async fn scan_for_select(&self) -> Result<Monitors> {
@@ -161,6 +167,37 @@ impl<'a> BleStuff<'a> {
             .await?;
 
         Ok(devices)
+    }
+    pub async fn connect_to_monitor(&mut self, addr: BleMacLe) -> Result<()> {
+        let addr = BLEAddress::from_be_bytes(addr, esp32_nimble::BLEAddressType::Random);
+        self.monitor.connect(&addr).await?;
+
+        let service = self.monitor.get_service(BATTERY_SERVICE_UUID).await?;
+
+        let uuid = BATTERY_CHAR_UUID;
+        let characteristic = service.get_characteristic(uuid).await?;
+        let value = characteristic.read_value().await?;
+        ::log::info!("Battery value: {:?}", value);
+
+        let service = self.monitor.get_service(HR_SERVICE_UUID).await?;
+
+        let uuid = HR_CHAR_UUID;
+        let characteristic = service.get_characteristic(uuid).await?;
+
+        if !characteristic.can_notify() {
+            ::log::error!("characteristic can't notify: {}", characteristic);
+            return Ok(());
+        }
+
+        ::log::info!("subscribe to {}", characteristic);
+        characteristic
+            .on_notify(|data| {
+                ::log::info!("{:?}", data);
+            })
+            // Dunno yet why this is `false`
+            .subscribe_notify(false)
+            .await?;
+        Ok(())
     }
 }
 
