@@ -14,6 +14,8 @@ pub enum AppError {
     BitbangSpi(#[from] bitbang_hal::spi::Error<esp_idf_hal::gpio::GpioError>),
     #[error(transparent)]
     Postcard(#[from] postcard::Error),
+    #[error(transparent)]
+    Ble(#[from] esp32_nimble::BLEError),
 }
 
 impl From<display_interface::DisplayError> for AppError {

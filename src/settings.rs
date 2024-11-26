@@ -1,13 +1,15 @@
 use std::{fs, io::Write};
 
-use crate::errors::{AppError, Result};
+use crate::{
+    errors::{AppError, Result},
+    heart_rate::ble::BleIdents,
+};
 use derivative::Derivative;
 use serde_derive::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct HrSettings {
-    pub name: String,
-    pub mac: String,
+    pub saved: Option<BleIdents>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Derivative)]

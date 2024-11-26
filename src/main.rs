@@ -24,10 +24,11 @@ use mipidsi::{
     options::{Orientation, Rotation},
     Builder,
 };
-use xpt2046::TouchEvent;
+use xpt2046::{TouchEvent, TouchKind};
 
 mod app;
 mod errors;
+mod heart_rate;
 mod littlefs;
 mod settings;
 mod touch;
@@ -165,19 +166,34 @@ fn main() -> Result<()> {
             loop {
                 match touch.get_touch_event() {
                     Ok(event) => {
-                        // info!("{event:?}");
-                        match touch_tx.try_send(event) {
-                            Ok(()) => (),
-                            // If it's full, lets just block until we *can* send more.
-                            Err(TrySendError::Full(_event)) => (),
-                            Err(TrySendError::Disconnected(_event)) => panic!(),
+                        let blocking_send = event
+                            .as_ref()
+                            .map(|e| e.kind != TouchKind::Move)
+                            .unwrap_or(true);
+
+                        if blocking_send {
+                            touch_tx.send(event).unwrap();
+                        } else {
+                            if let Err(TrySendError::Disconnected(_event)) =
+                                touch_tx.try_send(event)
+                            {
+                                panic!();
+                            }
                         }
+
+                        // match touch_tx.try_send(event) {
+                        //     Ok(()) => (),
+                        //     // If it's full, lets just block until we *can* send more.
+                        //     Err(TrySendError::Full(_event)) => (),
+                        //     // => ,
+                        // }
                     }
+
                     Err(e) => {
                         panic!("{e}")
                     }
                 }
-                FreeRtos::delay_ms(10);
+                FreeRtos::delay_ms(5);
             }
         })?;
 

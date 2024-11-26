@@ -57,7 +57,7 @@ esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc", rev = "3f2ce04", 
 # esp-idf-hal = { version = "0.44", default-features = false }
 esp-idf-hal = { git = "https://github.com/esp-rs/esp-idf-hal", rev = "97c01ef", default-features = false }
 esp-idf-sys = { version = "0.35", default-features = false }
-# esp32-nimble = "0.8.2"
+esp32-nimble = "0.8.2"
 anyhow = { version = "1.0", default-features = false }
 bstr = "1.11.0"
 embedded-graphics = "0.8.1"

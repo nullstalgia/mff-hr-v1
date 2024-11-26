@@ -18,16 +18,18 @@ use embedded_graphics::{
     text::{Alignment, Text, TextStyleBuilder},
 };
 use embedded_iconoir::prelude::IconoirNewIcon;
-use esp_idf_hal::prelude::Peripherals;
+use esp32_nimble::BLEDevice;
+use esp_idf_hal::{prelude::Peripherals, task::block_on};
 use log::*;
 use xpt2046::{TouchEvent, TouchKind};
 
 use crate::{
     errors::{AppError, Result},
+    heart_rate::ble::{BleIdents, BleStuff},
     settings::Settings,
 };
-// use anyhow::Result;
-pub struct App<DT>
+
+pub struct App<'a, DT>
 where
     DT: DrawTarget<Color = Rgb565, Error: Debug>,
     AppError: From<<DT as embedded_graphics::draw_target::DrawTarget>::Error>,
@@ -43,6 +45,8 @@ where
     doodle_lines: Lines,
     username_scratch: String,
     settings: Settings,
+    // ble_handle: BleHrHandle,
+    ble_stuff: BleStuff<'a>,
 }
 
 #[derive(Default)]
@@ -70,12 +74,12 @@ pub enum DisplayType {
 const INPUT_CHARS: &[char] = &[
     ' ', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R',
     'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k',
-    'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', '0', '1', '2', '3',
-    '4', '5', '6', '7', '8', '9', '~', '!', '#', '$', '%', '&', '(', ')', '*', '+', ',', '-', '.',
-    '/', ':', ';', '<', '=', '>', '?', '@', '[', ']', '^', '_',
+    'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', '~', '!', '#', '$',
+    '%', '&', '(', ')', '*', '+', ',', '-', '.', '/', ':', ';', '<', '=', '>', '?', '@', '[', ']',
+    '^', '_', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
 ];
 
-impl<DT> App<DT>
+impl<'a, DT> App<'a, DT>
 where
     DT: DrawTarget<Color = Rgb565, Error: Debug>,
     AppError: From<<DT as embedded_graphics::draw_target::DrawTarget>::Error>,
@@ -97,12 +101,18 @@ where
             doodle_lines: Lines::default(),
             username_scratch: String::new(),
             settings: Settings::littlefs_load()?,
+            // ble_handle: BleHrHandle::build()?,
+            ble_stuff: BleStuff::build(),
         })
     }
     pub fn doodle(&mut self) -> Result<()> {
         const BACK_BUTTON_BOUND: Rectangle =
             Rectangle::new(Point::new(290, 0), Size::new_equal(24));
         if self.paint_check() {
+            let title_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
+            let text_style = TextStyleBuilder::new().alignment(Alignment::Center).build();
+            Text::with_text_style("Doodle", Point::new(160, 10), title_style, text_style)
+                .draw(&mut self.display)?;
             let back_icon = embedded_iconoir::icons::size24px::actions::Undo::new(Rgb565::WHITE);
             let image = Image::new(&back_icon, BACK_BUTTON_BOUND.top_left);
             image.draw(&mut self.display)?;
@@ -120,7 +130,7 @@ where
                 kind: TouchKind::Start,
             }) => {
                 if BACK_BUTTON_BOUND.contains(*new_point) {
-                    self.change_view(AppView::MainMenu);
+                    self.change_view(AppView::MainMenu)?;
                     return Ok(());
                 }
             }
@@ -175,7 +185,7 @@ where
                 .build();
 
             Text::with_text_style(
-                "Main Menu",
+                "MFF Badge",
                 Point::new(160, 15),
                 character_style,
                 text_style,
@@ -245,14 +255,14 @@ where
         match self.touch() {
             Some(TouchEvent {
                 point,
-                kind: TouchKind::Move,
+                kind: TouchKind::Start,
             }) if point.y < 20 && point.x < 100 => {
-                self.change_view(AppView::MainMenu);
+                self.change_view(AppView::MainMenu)?;
             }
             Some(TouchEvent {
                 point,
                 // using Move instead of Start since Start's coord isn't always as accurate
-                kind: TouchKind::Move,
+                kind: TouchKind::Start,
             }) => {
                 // Appeasing borrow checker, probably isn't efficient.
                 let point = *point;
@@ -266,9 +276,11 @@ where
                     info!("{choice} at {point}");
                     match choice {
                         // MainMenu::Start => self.change_view(AppView::BadgeDisplay(())),
-                        MainMenu::NameInput => self.change_view(AppView::NameInput),
-                        // MainMenu::HrSelect => self.change_view(AppView::HrSelect),
-                        MainMenu::Doodle => self.change_view(AppView::Doodle),
+                        MainMenu::NameInput => self.change_view(AppView::NameInput)?,
+                        MainMenu::HrSelect => self.change_view(AppView::HrSelect)?,
+                        // MainMenu::HrSelect => self.ble_stuff.scan_for_select(),
+                        // ;
+                        MainMenu::Doodle => self.change_view(AppView::Doodle)?,
                         _ => (),
                     }
                 } else {
@@ -486,7 +498,7 @@ where
             // Name length
             Some(TouchEvent {
                 point,
-                kind: TouchKind::Move,
+                kind: TouchKind::Start,
             }) if (point.y >= (170 - 2) && point.y <= (190 - 2))
                 && (point.x >= 135 && point.x <= 185) =>
             {
@@ -513,7 +525,7 @@ where
             // Save/Cancel
             Some(TouchEvent {
                 point,
-                kind: TouchKind::Move,
+                kind: TouchKind::Start,
             }) if (point.y >= 200 && point.y <= 220) && (point.x >= 93 && point.x <= 227) => {
                 let is_save = {
                     if point.x > 320 / 2 {
@@ -527,10 +539,214 @@ where
                     self.settings.username.clone_from(&self.username_scratch);
                     self.settings.littlefs_save()?;
                 }
-                self.change_view(AppView::MainMenu);
+                self.change_view(AppView::MainMenu)?;
             }
             _ => (),
         }
+        Ok(())
+    }
+    fn hr_select(&mut self) -> Result<()> {
+        let has_hr_saved = self.settings.hr.saved.is_some();
+        let monitors_discovered = !self.ble_stuff.discovered.is_empty();
+
+        const BACK_BUTTON_BOUND: Rectangle =
+            Rectangle::new(Point::new(290, 0), Size::new_equal(24));
+
+        const TRASH_BUTTON_BOUND: Rectangle =
+            Rectangle::new(Point::new(290, 210), Size::new_equal(24));
+
+        const RESCAN_BUTTON_BOUND: Rectangle =
+            Rectangle::new(Point::new(10, 210), Size::new_equal(24));
+
+        const SAVE_BUTTON_BOUND: Rectangle =
+            Rectangle::with_center(Point::new(160, 165), Size::new(50, 35));
+
+        const LEFT_BUTTON_BOUND: Rectangle =
+            Rectangle::with_center(Point::new(100, 165), Size::new_equal(24));
+
+        const RIGHT_BUTTON_BOUND: Rectangle =
+            Rectangle::with_center(Point::new(220, 165), Size::new_equal(24));
+
+        if self.paint_check() {
+            let back_icon = embedded_iconoir::icons::size24px::actions::Undo::new(Rgb565::WHITE);
+            let image = Image::new(&back_icon, BACK_BUTTON_BOUND.top_left);
+            image.draw(&mut self.display)?;
+
+            let rescan_icon =
+                embedded_iconoir::icons::size24px::actions::Refresh::new(Rgb565::WHITE);
+            let image = Image::new(&rescan_icon, RESCAN_BUTTON_BOUND.top_left);
+            image.draw(&mut self.display)?;
+
+            let title_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
+            let name_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
+            let small_name_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
+            let save_style = MonoTextStyle::new(&FONT_10X20, Rgb565::GREEN);
+            let text_style = TextStyleBuilder::new().alignment(Alignment::Center).build();
+            let line_style = PrimitiveStyleBuilder::new()
+                .stroke_width(1)
+                .stroke_color(Rgb565::RED)
+                .build();
+            let green_line_style = PrimitiveStyleBuilder::new()
+                .stroke_width(1)
+                .stroke_color(Rgb565::RED)
+                .build();
+
+            if monitors_discovered {
+                let left_icon =
+                    embedded_iconoir::icons::size24px::navigation::ArrowLeft::new(Rgb565::WHITE);
+                let image = Image::new(&left_icon, LEFT_BUTTON_BOUND.top_left);
+                image.draw(&mut self.display)?;
+
+                let right_icon =
+                    embedded_iconoir::icons::size24px::navigation::ArrowRight::new(Rgb565::WHITE);
+                let image = Image::new(&right_icon, RIGHT_BUTTON_BOUND.top_left);
+                image.draw(&mut self.display)?;
+
+                let text = format!(
+                    "Select HR Monitor\n{index}/{total}",
+                    index = self.ble_stuff.chosen_discovered + 1,
+                    total = self.ble_stuff.discovered.len()
+                );
+
+                Text::with_text_style(&text, Point::new(160, 15), title_style, text_style)
+                    .draw(&mut self.display)?;
+
+                let device = {
+                    let (mac, name) = self
+                        .ble_stuff
+                        .discovered
+                        .iter()
+                        .nth(self.ble_stuff.chosen_discovered)
+                        .unwrap();
+                    BleIdents {
+                        mac: *mac,
+                        name: name.clone(),
+                    }
+                };
+
+                Text::with_text_style(
+                    &device.to_string(),
+                    Point::new(160, 65),
+                    name_style,
+                    text_style,
+                )
+                .draw(&mut self.display)?;
+
+                SAVE_BUTTON_BOUND.draw_styled(&line_style, &mut self.display)?;
+                Text::with_text_style("Save", Point::new(160, 170), save_style, text_style)
+                    .draw(&mut self.display)?;
+            } else {
+                Text::with_text_style(
+                    "No monitors found!\n\nRescan with bottom-left button?",
+                    Point::new(160, 40),
+                    title_style,
+                    text_style,
+                )
+                .draw(&mut self.display)?;
+            }
+
+            if let Some(saved) = &self.settings.hr.saved {
+                let trash_icon =
+                    embedded_iconoir::icons::size24px::actions::Trash::new(Rgb565::WHITE);
+                let image = Image::new(&trash_icon, TRASH_BUTTON_BOUND.top_left);
+                image.draw(&mut self.display)?;
+
+                Text::with_text_style(
+                    &format!("Saved:\n{saved}"),
+                    Point::new(160, 210),
+                    small_name_style,
+                    text_style,
+                )
+                .draw(&mut self.display)?;
+            } else {
+                Text::with_text_style(
+                    "No monitor saved",
+                    Point::new(160, 210),
+                    small_name_style,
+                    text_style,
+                )
+                .draw(&mut self.display)?;
+            }
+        }
+
+        match self.touch() {
+            Some(TouchEvent {
+                point,
+                kind: TouchKind::Start,
+            }) if BACK_BUTTON_BOUND.contains(*point) => {
+                self.change_view(AppView::MainMenu)?;
+                return Ok(());
+            }
+            Some(TouchEvent {
+                point,
+                kind: TouchKind::Start,
+            }) if TRASH_BUTTON_BOUND.contains(*point) && has_hr_saved => {
+                info!("Trashing saved device!");
+                self.settings.hr.saved = None;
+                self.settings.littlefs_save()?;
+                self.view_needs_painting = true;
+                self.display.clear(Rgb565::BLACK)?;
+                return Ok(());
+            }
+            Some(TouchEvent {
+                point,
+                kind: TouchKind::Start,
+            }) if SAVE_BUTTON_BOUND.contains(*point) && monitors_discovered => {
+                let device = {
+                    let (mac, name) = self
+                        .ble_stuff
+                        .discovered
+                        .iter()
+                        .nth(self.ble_stuff.chosen_discovered)
+                        .unwrap();
+                    BleIdents {
+                        mac: *mac,
+                        name: name.clone(),
+                    }
+                };
+                info!("Saving {device}!");
+                self.settings.hr.saved = Some(device);
+                self.settings.littlefs_save()?;
+                self.change_view(AppView::MainMenu)?;
+                return Ok(());
+            }
+            Some(TouchEvent {
+                point,
+                kind: TouchKind::Start,
+            }) if RESCAN_BUTTON_BOUND.contains(*point) => {
+                self.change_view(AppView::HrSelect)?;
+                return Ok(());
+            }
+            Some(TouchEvent {
+                point,
+                kind: TouchKind::Start,
+            }) if LEFT_BUTTON_BOUND.contains(*point) && monitors_discovered => {
+                self.display.clear(Rgb565::BLACK)?;
+
+                if let None = self.ble_stuff.chosen_discovered.checked_sub(1) {
+                    self.ble_stuff.chosen_discovered = self.ble_stuff.discovered.len() - 1;
+                }
+
+                self.view_needs_painting = true;
+                return Ok(());
+            }
+            Some(TouchEvent {
+                point,
+                kind: TouchKind::Start,
+            }) if RIGHT_BUTTON_BOUND.contains(*point) && monitors_discovered => {
+                self.display.clear(Rgb565::BLACK)?;
+
+                self.ble_stuff.chosen_discovered += 1;
+                if self.ble_stuff.chosen_discovered >= self.ble_stuff.discovered.len() {
+                    self.ble_stuff.chosen_discovered = 0;
+                }
+
+                self.view_needs_painting = true;
+                return Ok(());
+            }
+            _ => (),
+        }
+
         Ok(())
     }
     pub fn main_loop(&mut self) -> Result<()> {
@@ -544,12 +760,15 @@ where
             AppView::NameInput => {
                 self.name_input()?;
             }
+            AppView::HrSelect => {
+                self.hr_select()?;
+            }
             _ => (),
         }
         Ok(())
     }
-    fn change_view(&mut self, new_view: AppView) {
-        self.display.clear(Rgb565::BLACK).unwrap();
+    fn change_view(&mut self, new_view: AppView) -> Result<()> {
+        self.display.clear(Rgb565::BLACK)?;
         self.view_needs_painting = true;
         self.view = new_view;
         self.debounce_instant = Instant::now();
@@ -561,8 +780,32 @@ where
                 self.username_scratch.clone_from(&self.settings.username);
             }
             AppView::MainMenu => self.debounce_duration = Duration::from_millis(500),
+            AppView::HrSelect => {
+                let character_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
+                let text_style = TextStyleBuilder::new().alignment(Alignment::Center).build();
+
+                Text::with_text_style(
+                    "Scanning for BLE HR Monitors...\nPlease wait 10s...",
+                    Point::new(320 / 2, 240 / 2),
+                    character_style,
+                    text_style,
+                )
+                .draw(&mut self.display)?;
+
+                self.ble_stuff.discovered =
+                    block_on(async { self.ble_stuff.scan_for_select().await })?;
+
+                self.ble_stuff.chosen_discovered = 0;
+
+                info!("{:?}", self.ble_stuff.discovered);
+
+                self.display.clear(Rgb565::BLACK)?;
+                // self.change_view(AppView::MainMenu)?;
+            }
             _ => (),
         }
+
+        Ok(())
     }
     fn touch(&mut self) -> &Option<TouchEvent> {
         match self.touch_rx.recv() {
