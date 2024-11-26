@@ -75,7 +75,7 @@ xpt2046 = { path = "xpt2046" }
 # ] }
 # touchscreen = { path = "touchscreen", features = ["xpt2046"] }
 embedded-canvas = "0.3.1"
-postcard = "1.0.10"
+postcard = { version = "1.0.10", features = ["use-std"] }
 cstr = "0.2.12"
 # embedded-text = { version = "0.7.2", features = ["ansi"] }
 # embedded-menu = "0.6.1"
@@ -94,6 +94,9 @@ strum = "0.26"
 strum_macros = "0.26"
 embedded-iconoir = "0.2.3"
 thiserror = { version = "2", default-features = false }
+serde = "1.0.215"
+serde_derive = "1.0.215"
+derivative = "2.2.0"
 
 [build-dependencies]
 embuild = { version = "0.32.0", features = ["espidf"] }

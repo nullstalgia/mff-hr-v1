@@ -29,6 +29,7 @@ use xpt2046::TouchEvent;
 mod app;
 mod errors;
 mod littlefs;
+mod settings;
 mod touch;
 
 use std::{fs, sync::mpsc::TrySendError};

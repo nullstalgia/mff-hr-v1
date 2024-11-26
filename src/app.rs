@@ -22,7 +22,10 @@ use esp_idf_hal::prelude::Peripherals;
 use log::*;
 use xpt2046::{TouchEvent, TouchKind};
 
-use crate::errors::{AppError, Result};
+use crate::{
+    errors::{AppError, Result},
+    settings::Settings,
+};
 // use anyhow::Result;
 pub struct App<DT>
 where
@@ -38,7 +41,8 @@ where
     debounce_instant: Instant,
     debounce_duration: Duration,
     doodle_lines: Lines,
-    username: String,
+    username_scratch: String,
+    settings: Settings,
 }
 
 #[derive(Default)]
@@ -91,7 +95,8 @@ where
             debounce_instant: Instant::now(),
             debounce_duration: Duration::from_millis(100),
             doodle_lines: Lines::default(),
-            username: String::new(),
+            username_scratch: String::new(),
+            settings: Settings::littlefs_load()?,
         })
     }
     pub fn doodle(&mut self) -> Result<()> {
@@ -227,7 +232,7 @@ where
 
             Text::new(
                 &format!(
-                    "Heap Free: {}\nMin Free: {}",
+                    "Heap Free: {}\nMin. Free: {}",
                     unsafe { esp_idf_hal::sys::esp_get_free_heap_size() },
                     unsafe { esp_idf_hal::sys::esp_get_minimum_free_heap_size() }
                 ),
@@ -279,8 +284,8 @@ where
     // TODO fix at some point
     fn name_input(&mut self) -> Result<()> {
         let offset = Point::new(0, 100);
-        let mut width: i32 =
-            self.display.bounding_box().size.width as i32 / self.username.len().max(1) as i32;
+        let mut width: i32 = self.display.bounding_box().size.width as i32
+            / self.username_scratch.len().max(1) as i32;
         if self.paint_check() {
             let title_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
             let name_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
@@ -294,8 +299,8 @@ where
             Text::with_text_style("Name Input", Point::new(160, 15), title_style, text_style)
                 .draw(&mut self.display)?;
 
-            if self.username.is_empty() {
-                self.username = "Bingus".to_string();
+            if self.username_scratch.is_empty() {
+                self.username_scratch = "Bingus".to_string();
             }
             let mut buff: [u8; 4] = [0; 4];
 
@@ -314,8 +319,9 @@ where
             Line::new(offset + Point::new(0, 40), offset + Point::new(320, 40))
                 .draw_styled(&line_style, &mut self.display)?;
 
-            width = self.display.bounding_box().size.width as i32 / self.username.len() as i32;
-            for (index, char) in self.username.chars().enumerate() {
+            width =
+                self.display.bounding_box().size.width as i32 / self.username_scratch.len() as i32;
+            for (index, char) in self.username_scratch.chars().enumerate() {
                 let cell_x = offset.x + (index as i32 * width);
                 let cell_y = offset.y;
 
@@ -364,7 +370,7 @@ where
             .draw(&mut self.display)
             .unwrap();
             Text::with_text_style(
-                &self.username.len().to_string(),
+                &self.username_scratch.len().to_string(),
                 point,
                 title_style,
                 text_style,
@@ -447,15 +453,20 @@ where
                 };
                 let point = *point;
                 let mut char_area = Rectangle::default();
-                let index_of_chosen = self.username.chars().enumerate().find_map(|(index, _)| {
-                    let cell_x = offset.x + (index as i32 * width);
-                    char_area = Rectangle::new(Point::new(cell_x, 50), Size::new(width as u32, 90));
-                    if char_area.contains(point) {
-                        Some(index)
-                    } else {
-                        None
-                    }
-                });
+                let index_of_chosen =
+                    self.username_scratch
+                        .chars()
+                        .enumerate()
+                        .find_map(|(index, _)| {
+                            let cell_x = offset.x + (index as i32 * width);
+                            char_area =
+                                Rectangle::new(Point::new(cell_x, 50), Size::new(width as u32, 90));
+                            if char_area.contains(point) {
+                                Some(index)
+                            } else {
+                                None
+                            }
+                        });
 
                 if let Some(index) = index_of_chosen {
                     info!("{index}");
@@ -465,7 +476,7 @@ where
                     } else {
                         info!("NameBot!");
                     }
-                    string_dingle(&mut self.username, index, !is_top_half);
+                    string_dingle(&mut self.username_scratch, index, !is_top_half);
                     self.view_needs_painting = true;
                     self.display.fill_solid(&char_area, Rgb565::BLACK)?;
                     // self.change_view(AppView::NameInput);
@@ -487,15 +498,17 @@ where
                     }
                 };
                 if is_add {
-                    self.username.push(' ');
+                    self.username_scratch.push(' ');
                 } else {
-                    if self.username.len() > 2 {
-                        self.username.pop();
+                    if self.username_scratch.len() > 1 {
+                        self.username_scratch.pop();
                     }
                 }
-                self.change_view(AppView::NameInput);
-                info!("Len! {is_add}");
+                self.view_needs_painting = true;
+                self.display.clear(Rgb565::BLACK)?;
                 self.debounce_instant = Instant::now();
+                // self.change_view(AppView::NameInput);
+                info!("Len! {is_add}");
             }
             // Save/Cancel
             Some(TouchEvent {
@@ -510,7 +523,11 @@ where
                     }
                 };
                 info!("SaveCan! {is_save}");
-                self.debounce_instant = Instant::now();
+                if is_save {
+                    self.settings.username.clone_from(&self.username_scratch);
+                    self.settings.littlefs_save()?;
+                }
+                self.change_view(AppView::MainMenu);
             }
             _ => (),
         }
@@ -539,7 +556,10 @@ where
 
         // Extra actions based on new view
         match self.view {
-            AppView::NameInput => self.debounce_duration = Duration::from_millis(100),
+            AppView::NameInput => {
+                self.debounce_duration = Duration::from_millis(100);
+                self.username_scratch.clone_from(&self.settings.username);
+            }
             AppView::MainMenu => self.debounce_duration = Duration::from_millis(500),
             _ => (),
         }
