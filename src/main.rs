@@ -3,11 +3,14 @@
 use app::App;
 use display_interface_spi::SPIInterface;
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
+use errors::AppError;
 use esp_idf_hal::{
     delay::{Delay, FreeRtos},
     gpio::PinDriver,
     prelude::*,
     spi::{SpiDeviceDriver, SpiDriver, SpiDriverConfig, SPI2},
+    task::block_on,
+    timer::{TimerConfig, TimerDriver},
     // units::*,
 };
 use esp_idf_svc::fs::fatfs::Fatfs;
@@ -265,10 +268,19 @@ fn main() -> Result<()> {
 
     let mut app = App::build(touch_rx, display)?;
 
-    loop {
-        delay.delay_ms(10);
-        app.main_loop()?;
-    }
+    let mut timer = TimerDriver::new(peripherals.timer00, &TimerConfig::new())?;
+    let err = block_on(async {
+        loop {
+            if let Err(e) = app.main_loop().await {
+                break e;
+            }
+            timer.delay(timer.tick_hz() / 100).await.unwrap();
+        }
+    });
+
+    error!("{err}");
+
+    panic!()
 
     // Ok(())
 }

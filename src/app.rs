@@ -105,7 +105,7 @@ where
             ble: BleStuff::build(),
         })
     }
-    pub fn doodle(&mut self) -> Result<()> {
+    async fn doodle(&mut self) -> Result<()> {
         const BACK_BUTTON_BOUND: Rectangle =
             Rectangle::new(Point::new(290, 0), Size::new_equal(24));
         if self.paint_check() {
@@ -130,7 +130,7 @@ where
                 kind: TouchKind::Start,
             }) => {
                 if BACK_BUTTON_BOUND.contains(*new_point) {
-                    self.change_view(AppView::MainMenu)?;
+                    self.change_view(AppView::MainMenu).await?;
                     return Ok(());
                 }
             }
@@ -168,7 +168,7 @@ where
 
         Ok(())
     }
-    fn main_menu(&mut self) -> Result<()> {
+    async fn main_menu(&mut self) -> Result<()> {
         let options_offset = Point::new(20, 50);
         if self.paint_check() {
             info!(
@@ -257,7 +257,7 @@ where
                 point,
                 kind: TouchKind::Start,
             }) if point.y < 20 && point.x < 100 => {
-                self.change_view(AppView::MainMenu)?;
+                self.change_view(AppView::MainMenu).await?;
             }
             Some(TouchEvent {
                 point,
@@ -275,12 +275,12 @@ where
                 {
                     info!("{choice} at {point}");
                     match choice {
-                        MainMenu::Start => self.change_view(AppView::BadgeDisplay)?,
-                        MainMenu::NameInput => self.change_view(AppView::NameInput)?,
-                        MainMenu::HrSelect => self.change_view(AppView::HrSelect)?,
+                        MainMenu::Start => self.change_view(AppView::BadgeDisplay).await?,
+                        MainMenu::NameInput => self.change_view(AppView::NameInput).await?,
+                        MainMenu::HrSelect => self.change_view(AppView::HrSelect).await?,
                         // MainMenu::HrSelect => self.ble_stuff.scan_for_select(),
                         // ;
-                        MainMenu::Doodle => self.change_view(AppView::Doodle)?,
+                        MainMenu::Doodle => self.change_view(AppView::Doodle).await?,
                         _ => (),
                     }
                 } else {
@@ -294,7 +294,7 @@ where
     }
     // awful hardcoded-ness
     // TODO fix at some point
-    fn name_input(&mut self) -> Result<()> {
+    async fn name_input(&mut self) -> Result<()> {
         let offset = Point::new(0, 100);
         let mut width: i32 = self.display.bounding_box().size.width as i32
             / self.username_scratch.len().max(1) as i32;
@@ -537,13 +537,13 @@ where
                     self.settings.username.clone_from(&self.username_scratch);
                     self.settings.littlefs_save()?;
                 }
-                self.change_view(AppView::MainMenu)?;
+                self.change_view(AppView::MainMenu).await?;
             }
             _ => (),
         }
         Ok(())
     }
-    fn hr_select(&mut self) -> Result<()> {
+    async fn hr_select(&mut self) -> Result<()> {
         let has_hr_saved = self.settings.hr.saved.is_some();
         let monitors_discovered = !self.ble.discovered.is_empty();
 
@@ -672,7 +672,7 @@ where
                 point,
                 kind: TouchKind::Start,
             }) if BACK_BUTTON_BOUND.contains(*point) => {
-                self.change_view(AppView::MainMenu)?;
+                self.change_view(AppView::MainMenu).await?;
                 return Ok(());
             }
             Some(TouchEvent {
@@ -704,14 +704,14 @@ where
                 info!("Saving {device}!");
                 self.settings.hr.saved = Some(device);
                 self.settings.littlefs_save()?;
-                self.change_view(AppView::MainMenu)?;
+                self.change_view(AppView::MainMenu).await?;
                 return Ok(());
             }
             Some(TouchEvent {
                 point,
                 kind: TouchKind::Start,
             }) if RESCAN_BUTTON_BOUND.contains(*point) => {
-                self.change_view(AppView::HrSelect)?;
+                self.change_view(AppView::HrSelect).await?;
                 return Ok(());
             }
             Some(TouchEvent {
@@ -746,25 +746,25 @@ where
 
         Ok(())
     }
-    pub fn main_loop(&mut self) -> Result<()> {
+    pub async fn main_loop(&mut self) -> Result<()> {
         match self.view {
             AppView::Doodle => {
-                self.doodle()?;
+                self.doodle().await?;
             }
             AppView::MainMenu => {
-                self.main_menu()?;
+                self.main_menu().await?;
             }
             AppView::NameInput => {
-                self.name_input()?;
+                self.name_input().await?;
             }
             AppView::HrSelect => {
-                self.hr_select()?;
+                self.hr_select().await?;
             }
             _ => (),
         }
         Ok(())
     }
-    fn change_view(&mut self, new_view: AppView) -> Result<()> {
+    async fn change_view(&mut self, new_view: AppView) -> Result<()> {
         self.repaint_full()?;
         self.view = new_view;
         self.debounce_instant = Instant::now();
@@ -791,7 +791,8 @@ where
                 )
                 .draw(&mut self.display)?;
 
-                self.ble.discovered = block_on(async { self.ble.scan_for_select().await })?;
+                // self.ble.discovered = block_on(async { self.ble.scan_for_select().await })?;
+                self.ble.discovered = self.ble.scan_for_select().await?;
 
                 info!("{:?}", self.ble.discovered);
 
@@ -807,7 +808,8 @@ where
             }
             AppView::BadgeDisplay => {
                 if let Some(addr) = self.settings.hr.saved.as_ref() {
-                    block_on(async { self.ble.connect_to_monitor(addr.mac).await })?;
+                    // block_on(async { self.ble.connect_to_monitor(addr.mac).await })?;
+                    self.ble.connect_to_monitor(addr.mac).await?;
                 }
                 info!("Done.");
             }
