@@ -1,7 +1,6 @@
 #![deny(unused_must_use)]
 
 use app::App;
-use display_interface_spi::SPIInterface;
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 use esp_idf_hal::{
     delay::{Delay, FreeRtos},
@@ -15,6 +14,7 @@ use esp_idf_svc::hal::gpio::AnyIOPin;
 use esp_idf_svc::hal::sd::{spi::SdSpiHostDriver, SdCardConfiguration, SdCardDriver};
 use esp_idf_svc::hal::spi::{config::DriverConfig, Dma};
 use esp_idf_svc::io::vfs::MountedFatfs;
+use mipidsi::interface::SpiInterface;
 
 use esp_idf_sys::{self as _};
 use littlefs::paths::*;
@@ -40,13 +40,15 @@ use crate::errors::Result;
 fn main() -> Result<()> {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
+    let _mounted_eventfs = esp_idf_svc::io::vfs::MountedEventfs::mount(5)?;
 
     info!(
         "My code is running! Core: {:?}, Heap free: {}",
         esp_idf_hal::cpu::core(),
         unsafe { esp_idf_hal::sys::esp_get_free_heap_size() }
     );
-
+    let free_stack = unsafe { esp_idf_hal::sys::uxTaskGetStackHighWaterMark(std::ptr::null_mut()) };
+    info!("Stack Free: {free_stack}");
     let peripherals = Peripherals::take()?;
     let mut delay: Delay = Default::default();
     let io0 = {
@@ -74,14 +76,15 @@ fn main() -> Result<()> {
         lcd_clk,
         lcd_mosi,
         Some(lcd_miso),
-        &SpiDriverConfig::new(),
+        &DriverConfig::default().dma(Dma::Auto(4096)),
     )?;
     let mut lcd_backlight = PinDriver::output(peripherals.pins.gpio21)?;
     lcd_backlight.set_low()?;
 
     let config_1 = esp_idf_hal::spi::config::Config::new().baudrate(80.MHz().into());
     let device_1 = SpiDeviceDriver::new(driver, Some(lcd_cs), &config_1)?;
-    let di = SPIInterface::new(device_1, lcd_dc);
+    let mut buffer = [0_u8; 512];
+    let di = SpiInterface::new(device_1, lcd_dc, &mut buffer);
     // Define the display from the display interface and initialize it
     let mut display = Builder::new(ST7789, di)
         .orientation(Orientation::new().rotate(Rotation::Deg90))
@@ -147,7 +150,7 @@ fn main() -> Result<()> {
     let mut touch = Xpt2046::new(bitbang_spi, touch_calibration);
 
     if !touch.calibrated() {
-        // display.draw_iter(pixels)
+        // Display is uncalibrated, resolve that before we do anything else.
         let output = touch.intrusive_calibration(&mut display, &mut delay)?;
         info!("{output:#?}");
         fs::write(
@@ -156,13 +159,12 @@ fn main() -> Result<()> {
         )?;
     }
 
-    // TODO new plan for input "buffering"
-    // also sample averaging
     let (touch_tx, touch_rx) = std::sync::mpsc::sync_channel::<Option<TouchEvent>>(0);
 
     std::thread::Builder::new()
         .stack_size(2000)
         .spawn(move || {
+            let mut blocking_item = None;
             loop {
                 match touch.get_touch_event() {
                     Ok(event) => {
@@ -170,23 +172,20 @@ fn main() -> Result<()> {
                             .as_ref()
                             .map(|e| e.kind != TouchKind::Move)
                             .unwrap_or(true);
-
-                        if blocking_send {
-                            touch_tx.send(event).unwrap();
-                        } else {
-                            if let Err(TrySendError::Disconnected(_event)) =
-                                touch_tx.try_send(event)
-                            {
-                                panic!();
-                            }
+                        if blocking_send && blocking_item.is_none() {
+                            blocking_item = Some(event.clone());
                         }
 
-                        // match touch_tx.try_send(event) {
-                        //     Ok(()) => (),
-                        //     // If it's full, lets just block until we *can* send more.
-                        //     Err(TrySendError::Full(_event)) => (),
-                        //     // => ,
-                        // }
+                        let item_to_send = blocking_item.as_ref().unwrap_or(&event);
+
+                        match touch_tx.try_send(item_to_send.to_owned()) {
+                            Ok(()) => {
+                                _ = blocking_item.take();
+                            }
+                            // If it's full, try again next loop run
+                            Err(TrySendError::Full(_event)) => (),
+                            Err(TrySendError::Disconnected(_event)) => panic!(),
+                        }
                     }
 
                     Err(e) => {
@@ -263,8 +262,12 @@ fn main() -> Result<()> {
     //     })
     //     .unwrap();
 
-    let mut app = App::build(touch_rx, display)?;
+    let _ble_device = esp32_nimble::BLEDevice::take();
 
+    let mut app = App::build(touch_rx, display, delay)?;
+    let free_stack = unsafe { esp_idf_hal::sys::uxTaskGetStackHighWaterMark(std::ptr::null_mut()) };
+    info!("Stack Free: {free_stack}");
+    // app.change_view(crate::app::AppView::BadgeDisplay)?;
     loop {
         delay.delay_ms(10);
         app.main_loop()?;

@@ -3,7 +3,7 @@ use std::{
     sync::mpsc::{self, Receiver, Sender, SyncSender},
 };
 
-use crate::errors::Result;
+use crate::errors::{AppError, Result};
 use bstr::ByteSlice;
 use esp32_nimble::{utilities::BleUuid, uuid128, BLEAddress, BLEClient, BLEDevice, BLEScan};
 use esp_idf_hal::delay::Delay;
@@ -14,6 +14,9 @@ use esp_idf_svc::hal::{
 };
 use log::info;
 use serde_derive::{Deserialize, Serialize};
+use takeable::Takeable;
+
+use super::measurement::parse_hrm;
 
 const BATTERY_SERVICE_UUID: BleUuid = uuid128!("0000180f-0000-1000-8000-00805f9b34fb");
 const BATTERY_CHAR_UUID: BleUuid = uuid128!("00002a19-0000-1000-8000-00805f9b34fb");
@@ -38,6 +41,11 @@ impl From<BatteryLevel> for u8 {
             BatteryLevel::Level(battery) => battery,
             _ => 0,
         }
+    }
+}
+impl From<u8> for BatteryLevel {
+    fn from(val: u8) -> Self {
+        BatteryLevel::Level(val)
     }
 }
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -67,48 +75,54 @@ impl std::fmt::Display for BleIdents {
     }
 }
 
-// impl BleIdents {
-//     pub fn to_string_all(&self) -> String {
-//         let name_display = if self.name.is_empty() {
-//             "Unknown".to_string()
-//         } else {
-//             self.name.clone()
-//         };
-//         format!(
-//             "{}\n({:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X})",
-//             name_display,
-//             self.mac[0],
-//             self.mac[1],
-//             self.mac[2],
-//             self.mac[3],
-//             self.mac[4],
-//             self.mac[5],
-//         )
-//     }
-// }
-
-// impl std::fmt::Display for BleIdents {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         if !self.name.is_empty() {
-//             write!(f, "{}", self.name)
-//         } else {
-//             write!(
-//                 f,
-//                 "MAC: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-//                 self.mac[0], self.mac[1], self.mac[2], self.mac[3], self.mac[4], self.mac[5],
-//             )
-//         }
-//     }
-// }
-
+// Lots of logic yoinked from https://github.com/nullstalgia/iron-heart
+#[derive(Debug, Default, Clone)]
 pub struct MonitorStatus {
     pub heart_rate_bpm: u16,
+    pub latest_rr: std::time::Duration,
     pub rr_intervals: Vec<std::time::Duration>,
     pub battery_level: BatteryLevel,
-    // Twitches are calculated by HR sources so that
-    // all listeners see twitches at the same time
+
     pub twitch_up: bool,
     pub twitch_down: bool,
+    use_real_rr: bool,
+}
+
+impl MonitorStatus {
+    pub fn update_from_slice(&mut self, data: &[u8]) {
+        let newest = parse_hrm(data);
+
+        self.heart_rate_bpm = newest.bpm;
+
+        if !newest.rr_intervals.is_empty() {
+            self.use_real_rr = true;
+        }
+        let mut twitch_up = false;
+        let mut twitch_down = false;
+        let rr_intervals = if self.use_real_rr {
+            newest.rr_intervals
+        } else {
+            vec![rr_from_bpm(newest.bpm)]
+        };
+
+        for new_rr in &rr_intervals {
+            const TWITCH_THRESHOLD: f32 = 0.02;
+            if self.latest_rr.abs_diff(*new_rr).as_secs_f32() > TWITCH_THRESHOLD {
+                twitch_up |= *new_rr > self.latest_rr;
+                twitch_down |= *new_rr < self.latest_rr;
+            }
+            self.latest_rr = *new_rr;
+        }
+        self.rr_intervals = rr_intervals;
+        self.twitch_up = twitch_up;
+        self.twitch_down = twitch_down;
+    }
+}
+
+pub fn rr_from_bpm(bpm: u16) -> std::time::Duration {
+    // Make sure it's at least 1 to prevent a potential divide by zero
+    let bpm = bpm.max(1);
+    std::time::Duration::from_secs_f32(60.0 / bpm as f32)
 }
 
 pub struct BleStuff<'a> {
@@ -168,37 +182,16 @@ impl<'a> BleStuff<'a> {
 
         Ok(devices)
     }
-    pub async fn connect_to_monitor(&mut self, addr: BleMacLe) -> Result<()> {
-        let addr = BLEAddress::from_be_bytes(addr, esp32_nimble::BLEAddressType::Random);
-        self.monitor.connect(&addr).await?;
-
-        let service = self.monitor.get_service(BATTERY_SERVICE_UUID).await?;
-
-        let uuid = BATTERY_CHAR_UUID;
-        let characteristic = service.get_characteristic(uuid).await?;
-        let value = characteristic.read_value().await?;
-        ::log::info!("Battery value: {:?}", value);
-
-        let service = self.monitor.get_service(HR_SERVICE_UUID).await?;
-
-        let uuid = HR_CHAR_UUID;
-        let characteristic = service.get_characteristic(uuid).await?;
-
-        if !characteristic.can_notify() {
-            ::log::error!("characteristic can't notify: {}", characteristic);
-            return Ok(());
-        }
-
-        ::log::info!("subscribe to {}", characteristic);
-        characteristic
-            .on_notify(|data| {
-                ::log::info!("{:?}", data);
-            })
-            // Dunno yet why this is `false`
-            .subscribe_notify(false)
-            .await?;
-        Ok(())
-    }
+    // pub async fn is_monitor_present() -> Result<bool> {
+    //     let mut found = false;
+    //     Ok(found)
+    // }
+    // pub async fn connect_to_monitor(
+    //     &mut self,
+    //     addr: BleMacLe,
+    //     hr_tx: SyncSender<MonitorStatus>,
+    // ) -> Result<()> {
+    // }
 }
 
 // #[derive(Debug)]
@@ -208,120 +201,117 @@ impl<'a> BleStuff<'a> {
 //     // Disconnect
 // }
 
-// pub enum BleHrReply {
-//     ScannedDevice(BleIdents),
-//     MonitorStatus(MonitorStatus),
-//     Error,
-// }
+#[derive(Debug)]
+pub enum MonitorReply {
+    Connected,
+    Error(AppError),
+    // ScannedDevice(BleIdents),
+    MonitorStatus(MonitorStatus),
+    Disconnected,
+}
 
-// pub struct BleHrHandle {
-//     reply_rx: Receiver<BleHrReply>,
-//     command_tx: SyncSender<BleHrCommand>,
-// }
+pub struct MonitorHandle {
+    pub reply_rx: Receiver<MonitorReply>,
+}
 
-// impl BleHrHandle {
-//     pub fn build() -> Result<Self> {
-//         let (command_tx, command_rx) = mpsc::sync_channel::<BleHrCommand>(5);
-//         let (reply_tx, reply_rx) = mpsc::sync_channel::<BleHrReply>(5);
+impl MonitorHandle {
+    pub fn build(addr: [u8; 6], delay: Delay) -> Result<Self> {
+        // let (command_tx, command_rx) = mpsc::sync_channel::<BleHrCommand>(5);
+        let (reply_tx, reply_rx) = mpsc::sync_channel::<MonitorReply>(5);
 
-//         // let actor = BleHrActor::build(command_rx, reply_tx)?;
+        std::thread::Builder::new()
+            .stack_size(4000)
+            .spawn(move || {
+                let mut actor = MonitorActor::build(addr).unwrap();
+                block_on(async {
+                    actor.connect(reply_tx).await.unwrap();
+                });
+                loop {
+                    if !actor.client.connected() {
+                        break;
+                    }
+                    delay.delay_ms(1000);
+                }
+            })?;
 
-//         // std::thread::Builder::new()
-//         //     .name("ble-hr".to_string())
-//         //     .stack_size(10000)
-//         //     .spawn(move || {
-//         //         block_on(async {
-//         //             // ble_stuff().await.unwrap()
+        Ok(Self {
+            reply_rx,
+            // command_tx,
+        })
+    }
+    // pub fn test(&self) {
+    //     self.command_tx.send(BleHrCommand::Scan).unwrap();
+    // }
+}
 
-//         //             while let Ok(command) = actor.command_rx.recv() {
-//         //                 info!("ble-hr: {command:?}");
-//         //                 match command {
-//         //                     BleHrCommand::Scan => {
-//         //                         actor.scan_for_select().await.unwrap();
-//         //                     }
-//         //                     BleHrCommand::Connect => (),
-//         //                 }
-//         //             }
-//         //         });
-//         //     })?;
+struct MonitorActor {
+    // command_rx: Receiver<BleHrCommand>,
+    // reply_tx: Takeable<SyncSender<MonitorReply>>,
+    client: BLEClient,
+    address: [u8; 6],
+    // delay: Delay,
+}
 
-//         Ok(Self {
-//             reply_rx,
-//             command_tx,
-//         })
-//     }
-//     pub fn test(&self) {
-//         self.command_tx.send(BleHrCommand::Scan).unwrap();
-//     }
-// }
+impl MonitorActor {
+    pub fn build(
+        // command_rx: Receiver<BleHrCommand>,
+        // reply_tx: SyncSender<MonitorReply>,
+        target_addr: [u8; 6], // delay: Delay,
+    ) -> Result<Self> {
+        let mut client = BLEClient::new();
+        client.on_connect(|client| {
+            client.update_conn_params(120, 120, 0, 60).unwrap();
+        });
 
-// struct BleHrActor<'a> {
-//     command_rx: Receiver<BleHrCommand>,
-//     reply_tx: SyncSender<BleHrReply>,
-//     device: &'a mut BLEDevice,
-//     // delay: Delay,
-// }
+        Ok(Self {
+            // command_rx,
+            // reply_tx: Takeable::new(reply_tx),
+            client,
+            address: target_addr,
+            // delay,
+        })
+    }
+    async fn connect(&mut self, reply_tx: SyncSender<MonitorReply>) -> Result<()> {
+        let addr = BLEAddress::from_be_bytes(self.address, esp32_nimble::BLEAddressType::Random);
 
-// impl<'a> BleHrActor<'a> {
-//     pub fn build(
-//         command_rx: Receiver<BleHrCommand>,
-//         reply_tx: SyncSender<BleHrReply>,
-//         // delay: Delay,
-//     ) -> Result<Self> {
-//         let device = BLEDevice::take();
-//         Ok(Self {
-//             command_rx,
-//             reply_tx,
-//             device,
-//             // delay,
-//         })
-//     }
+        if let Err(e) = self.client.connect(&addr).await {
+            reply_tx.send(MonitorReply::Error(e.into())).unwrap();
+            return Ok(());
+        }
 
-//     pub async fn scan_for_select(&self) -> Result<()> {
-//         let mut ble_scan = BLEScan::new();
-//         let _: Option<()> = ble_scan
-//             // .active_scan(true)
-//             .interval(100)
-//             .window(99)
-//             .start(&self.device, 10000, |device, data| {
-//                 info!("{device:#?}\n{data:#?}");
-//                 None
-//             })
-//             .await?;
+        let mut status = MonitorStatus::default();
 
-//         Ok(())
-//     }
+        if let Ok(service) = self.client.get_service(BATTERY_SERVICE_UUID).await {
+            let characteristic = service.get_characteristic(BATTERY_CHAR_UUID).await?;
+            let value = characteristic.read_value().await?;
+            ::log::info!("Battery value: {:?}%", value[0]);
+            status.battery_level = value[0].into();
+        }
 
-//     pub async fn scan_for_connect(&self, desired_device: Option<&BleIdents>) -> Result<()> {
-//         return todo!();
-//         let known_mac: Option<[u8; 6]> = desired_device.map(|d| d.mac);
-//         let mut ble_scan = BLEScan::new();
-//         let device = ble_scan
-//             // .active_scan(true)
-//             .interval(100)
-//             .window(99)
-//             .start(&self.device, 10000, |device, data| {
-//                 // If we supplied a saved device
-//                 if let Some(saved) = desired_device {
-//                     // Check if the MAC or name matches
-//                     if let Some(addr) = known_mac.as_ref() {
-//                         if device.addr().as_le_bytes() == *addr {
-//                             return Some(*device);
-//                         }
-//                     } else if let Some(name) = data.name() {
-//                         if name == saved.name {
-//                             return Some(*device);
-//                         }
-//                     }
-//                 }
+        let hr_service = self.client.get_service(HR_SERVICE_UUID).await?;
 
-//                 None
-//             })
-//             .await?;
+        let characteristic = hr_service.get_characteristic(HR_CHAR_UUID).await?;
+        if !characteristic.can_notify() {
+            ::log::error!("characteristic can't notify: {}", characteristic);
+            return Ok(());
+        }
 
-//         Ok(())
-//     }
-// }
+        ::log::info!("subscribe to {}", characteristic);
+        // let reply_tx = self.reply_tx.take();
+        characteristic
+            .on_notify(move |data| {
+                status.update_from_slice(data);
+                reply_tx
+                    .send(MonitorReply::MonitorStatus(status.clone()))
+                    .unwrap();
+                ::log::info!("HR Notify: {:?}", data);
+            })
+            // Dunno yet why this is `false`
+            .subscribe_notify(false)
+            .await?;
+        Ok(())
+    }
+}
 
 // pub async fn ble_stuff() -> Result<()> {
 //     // block_on(async {

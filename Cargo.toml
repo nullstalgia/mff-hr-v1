@@ -66,7 +66,8 @@ display-interface = "0.5.0"
 display-interface-spi = "0.5.0"
 embedded-hal = "1.0.0"
 # For display driver impl, ST7789
-mipidsi = "0.8.0"
+# mipidsi = "0.8.0"
+mipidsi = { git = "https://github.com/GrantM11235/mipidsi", branch = "new-interface" }
 # For touch screen impl, XPT2046
 # xpt2046 = { git = "https://github.com/Yandrik/xpt2046", rev = "8d8cf94" }
 xpt2046 = { path = "xpt2046" }
@@ -97,6 +98,8 @@ thiserror = { version = "2", default-features = false }
 serde = "1.0.215"
 serde_derive = "1.0.215"
 derivative = "2.2.0"
+takeable = "0.2.2"
+eg-seven-segment = "0.2.0"
 
 [build-dependencies]
 embuild = { version = "0.32.0", features = ["espidf"] }

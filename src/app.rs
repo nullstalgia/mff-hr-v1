@@ -1,53 +1,42 @@
 use std::{
     fmt::Debug,
-    sync::mpsc::{Receiver, TryRecvError},
+    sync::mpsc::{self, Receiver, TryRecvError},
 };
 
+// use display_interface::WriteOnlyDataCommand;
+use eg_seven_segment::SevenSegmentStyleBuilder;
 use embassy_time::{Duration, Instant};
+use embedded_canvas::{CCanvasAt, Canvas, CanvasAt};
 use embedded_graphics::{
     image::Image,
     mono_font::{
         ascii::{FONT_10X20, FONT_6X10},
         MonoFont, MonoTextStyle,
     },
-    pixelcolor::Rgb565,
+    pixelcolor::{BinaryColor, Rgb565},
     prelude::*,
     primitives::{
         Line, Polyline, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, StyledDrawable,
     },
     text::{Alignment, Text, TextStyleBuilder},
 };
+use embedded_hal::digital::OutputPin;
 use embedded_iconoir::prelude::IconoirNewIcon;
-use esp32_nimble::BLEDevice;
-use esp_idf_hal::{prelude::Peripherals, task::block_on};
+
+use esp_idf_hal::{delay::Delay, prelude::Peripherals, task::block_on};
 use log::*;
+use mipidsi::{
+    interface::{CommandInterface, PixelFormat, PixelInterface},
+    models::Model,
+    options::{Orientation, Rotation},
+};
 use xpt2046::{TouchEvent, TouchKind};
 
 use crate::{
     errors::{AppError, Result},
-    heart_rate::ble::{BleIdents, BleStuff},
+    heart_rate::ble::{BleIdents, BleStuff, MonitorHandle, MonitorReply, MonitorStatus},
     settings::Settings,
 };
-
-pub struct App<'a, DT>
-where
-    DT: DrawTarget<Color = Rgb565, Error: Debug>,
-    AppError: From<<DT as embedded_graphics::draw_target::DrawTarget>::Error>,
-{
-    touch_rx: Receiver<Option<TouchEvent>>,
-    last_touch: Option<TouchEvent>,
-    last_doodle_point: Option<Point>,
-    view: AppView,
-    view_needs_painting: bool,
-    display: DT,
-    debounce_instant: Instant,
-    debounce_duration: Duration,
-    doodle_lines: Lines,
-    username_scratch: String,
-    settings: Settings,
-    // ble_handle: BleHrHandle,
-    ble: BleStuff<'a>,
-}
 
 #[derive(Default)]
 struct Lines {
@@ -62,7 +51,7 @@ pub enum AppView {
     HrSelect,
     NameInput,
     // Gif,
-    ResetSettings,
+    // ResetSettings,
 }
 
 // pub enum DisplayType {
@@ -79,12 +68,71 @@ const INPUT_CHARS: &[char] = &[
     '^', '_', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
 ];
 
-impl<'a, DT> App<'a, DT>
+pub struct App<'a, DI, MODEL, RST>
 where
-    DT: DrawTarget<Color = Rgb565, Error: Debug>,
-    AppError: From<<DT as embedded_graphics::draw_target::DrawTarget>::Error>,
+    // DT: DrawTarget<Color = Rgb565, Error: Debug>,
+    // // AppError: From<<DT as embedded_graphics::draw_target::DrawTarget>::Error>,
+    // DI: WriteOnlyDataCommand,
+    // M: Model,
+    // RST: OutputPin,
+    MODEL: Model<ColorFormat = Rgb565>,
+    // RST: OutputPin,
+
+    // Bounds from impl:
+    DI: PixelInterface,
+    MODEL: Model,
+    MODEL::ColorFormat: PixelFormat<DI::PixelWord>,
+    RST: OutputPin,
+    AppError: From<<DI as CommandInterface>::Error>,
 {
-    pub fn build(touch_rx: Receiver<Option<TouchEvent>>, display: DT) -> Result<Self> {
+    display: mipidsi::Display<DI, MODEL, RST>,
+    view: AppView,
+    view_needs_painting: bool,
+
+    touch_rx: Receiver<Option<TouchEvent>>,
+    last_touch: Option<TouchEvent>,
+    last_doodle_point: Option<Point>,
+    debounce_instant: Instant,
+    debounce_duration: Duration,
+    doodle_lines: Lines,
+
+    monitor: Option<MonitorHandle>,
+
+    ble: BleStuff<'a>,
+
+    // hr_rx: Option<Receiver<MonitorStatus>>,
+    current_hr: Option<MonitorStatus>,
+    hr_bound: Rectangle,
+
+    username_scratch: String,
+    settings: Settings,
+
+    delay: Delay,
+
+    numeric_canvas: Canvas<BinaryColor>,
+}
+
+impl<'a, DI, MODEL, RST> App<'a, DI, MODEL, RST>
+where
+    // // DT: DrawTarget<Color = Rgb565, Error: Debug>,
+    // // AppError: From<<DT as embedded_graphics::draw_target::DrawTarget>::Error>,
+    // DI: WriteOnlyDataCommand,
+    // // M: Model,
+    MODEL: Model<ColorFormat = Rgb565>,
+    // RST: OutputPin,
+
+    // Bounds from impl:
+    DI: PixelInterface,
+    MODEL: Model,
+    MODEL::ColorFormat: PixelFormat<DI::PixelWord>,
+    RST: OutputPin,
+    AppError: From<<DI as CommandInterface>::Error>,
+{
+    pub fn build(
+        touch_rx: Receiver<Option<TouchEvent>>,
+        display: mipidsi::Display<DI, MODEL, RST>,
+        delay: Delay,
+    ) -> Result<Self> {
         Ok(Self {
             display,
             touch_rx,
@@ -103,6 +151,12 @@ where
             settings: Settings::littlefs_load()?,
             // ble_handle: BleHrHandle::build()?,
             ble: BleStuff::build(),
+            current_hr: None,
+            // hr_rx: None,
+            monitor: None,
+            delay,
+            hr_bound: Rectangle::default(),
+            numeric_canvas: Canvas::new(Size::new(100, 60)),
         })
     }
     pub fn doodle(&mut self) -> Result<()> {
@@ -268,7 +322,8 @@ where
                 let point = *point;
                 // Setting the pixel that was tapped to help with debugging
                 self.display
-                    .fill_solid(&Rectangle::new(point, Size::new_equal(1)), Rgb565::BLUE)?;
+                    .set_pixel(point.x as u16, point.y as u16, Rgb565::BLUE)?;
+                // .fill_solid(&Rectangle::new(point, Size::new_equal(1)), Rgb565::BLUE)?;
 
                 if let Some(choice) =
                     MainMenu::from_touch(Some(options_offset), &point, &FONT_10X20)
@@ -278,10 +333,7 @@ where
                         MainMenu::Start => self.change_view(AppView::BadgeDisplay)?,
                         MainMenu::NameInput => self.change_view(AppView::NameInput)?,
                         MainMenu::HrSelect => self.change_view(AppView::HrSelect)?,
-                        // MainMenu::HrSelect => self.ble_stuff.scan_for_select(),
-                        // ;
                         MainMenu::Doodle => self.change_view(AppView::Doodle)?,
-                        _ => (),
                     }
                 } else {
                     info!("Touch item not found at {point}");
@@ -464,16 +516,21 @@ where
                     }
                 };
                 let point = *point;
-                let mut char_area = Rectangle::default();
+                let mut char_touch_area = Rectangle::default();
+                let mut char_render_area = Rectangle::default();
                 let index_of_chosen =
                     self.username_scratch
                         .chars()
                         .enumerate()
                         .find_map(|(index, _)| {
                             let cell_x = offset.x + (index as i32 * width);
-                            char_area =
+                            char_touch_area =
                                 Rectangle::new(Point::new(cell_x, 50), Size::new(width as u32, 90));
-                            if char_area.contains(point) {
+                            char_render_area = Rectangle::new(
+                                Point::new(cell_x + 10, 80),
+                                Size::new((width as u32) - 5, 30),
+                            );
+                            if char_touch_area.contains(point) {
                                 Some(index)
                             } else {
                                 None
@@ -489,7 +546,8 @@ where
                         info!("NameBot!");
                     }
                     string_dingle(&mut self.username_scratch, index, !is_top_half);
-                    self.repaint_full()?;
+                    self.display.fill_solid(&char_render_area, Rgb565::BLACK)?;
+                    self.repaint();
                     // self.change_view(AppView::NameInput);
                 }
                 self.debounce_instant = Instant::now();
@@ -746,6 +804,114 @@ where
 
         Ok(())
     }
+    fn badge_view(&mut self) -> Result<()> {
+        let font_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
+        // let mut numeric_canvas: CanvasAt<BinaryColor> =
+        //     CanvasAt::new(Point::new(71, 91), Size::new(100, 60));
+
+        let bpm_style = SevenSegmentStyleBuilder::new()
+            .digit_size(Size::new(10 * 3, 20 * 3)) // digits are 10x20 pixels
+            .digit_spacing(5) // 5px spacing between digits
+            .segment_width(5) // 5px wide segments
+            // .segment_color(Rgb565::RED)
+            .segment_color(BinaryColor::On)
+            .build();
+        let left_style = TextStyleBuilder::new().alignment(Alignment::Left).build();
+        let center_style = TextStyleBuilder::new().alignment(Alignment::Center).build();
+        if self.paint_check() {
+            let title_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
+            Text::with_text_style("Badge!", Point::new(240 / 2, 20), title_style, center_style)
+                .draw(&mut self.display)?;
+        }
+
+        if let Some(monitor) = &self.monitor {
+            if let Ok(msg) = monitor.reply_rx.recv() {
+                // self.clear_vertical()?;
+                let text = format!("{msg:#?}");
+                info!("{text}");
+                // Text::with_text_style(&text, Point::new(240 / 2, 60), font_style, text_style)
+                //     .draw(&mut self.display)?;
+                match msg {
+                    MonitorReply::MonitorStatus(status) => {
+                        // self.display.fill_solid(&self.hr_bound, Rgb565::BLACK)?;
+                        let bpm_string = format!(
+                            "{}",
+                            // "{:03}",
+                            status.heart_rate_bpm
+                        );
+                        let text = Text::with_text_style(
+                            &bpm_string,
+                            // Point::new(240 / 2, 150),
+                            // Point::new(0, 60),
+                            Point::new(50, 60),
+                            bpm_style,
+                            center_style,
+                        );
+
+                        // self.hr_bound = text.bounding_box();
+
+                        // info!("{:?}", self.hr_bound);
+
+                        self.numeric_canvas.pixels.iter_mut().for_each(|pixel| {
+                            if pixel.is_some() {
+                                *pixel = Some(BinaryColor::Off);
+                            }
+                        });
+
+                        _ = text.draw(&mut self.numeric_canvas);
+
+                        const NUMERIC_BOUND: Rectangle =
+                            Rectangle::new(Point::new(71, 220), Size::new(100, 60));
+
+                        self.display.set_pixels(
+                            NUMERIC_BOUND.top_left.x as u16,
+                            NUMERIC_BOUND.top_left.y as u16,
+                            NUMERIC_BOUND.bottom_right().unwrap().x as u16,
+                            NUMERIC_BOUND.bottom_right().unwrap().y as u16,
+                            self.numeric_canvas.pixels.iter().map(|p| {
+                                match p {
+                                    Some(BinaryColor::On) => Rgb565::RED,
+                                    Some(BinaryColor::Off) => Rgb565::BLACK,
+                                    None => Rgb565::BLACK,
+                                    // Some(BinaryColor::Off) => Rgb565::new(50, 0, 0),
+                                }
+                                // if let Some(BinaryColor::On) = p {
+                                //     Rgb565::RED
+                                // } else {
+                                //     Rgb565::BLACK
+                                // }
+                            }),
+                        )?;
+
+                        // self.display.fill_contiguous(
+                        //     &Rectangle::new(Point::new(71, 180), Size::new(100, 60)),
+                        //     self.numeric_canvas.pixels.iter().map(|p| {
+                        //         match p {
+                        //             Some(BinaryColor::On) => Rgb565::RED,
+                        //             Some(BinaryColor::Off) => Rgb565::BLACK,
+                        //             None => Rgb565::BLACK,
+                        //             // Some(BinaryColor::Off) => Rgb565::new(50, 0, 0),
+                        //         }
+                        //         // if let Some(BinaryColor::On) = p {
+                        //         //     Rgb565::RED
+                        //         // } else {
+                        //         //     Rgb565::BLACK
+                        //         // }
+                        //     }),
+                        // )?;
+
+                        // self.numeric_canvas
+                        //     .place_at(Point::new(71, 91))
+                        //     .draw(&mut self.display.color_converted())?;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn main_loop(&mut self) -> Result<()> {
         match self.view {
             AppView::Doodle => {
@@ -760,29 +926,70 @@ where
             AppView::HrSelect => {
                 self.hr_select()?;
             }
-            _ => (),
+            AppView::BadgeDisplay => {
+                self.badge_view()?;
+            }
         }
         Ok(())
     }
-    fn change_view(&mut self, new_view: AppView) -> Result<()> {
+    pub fn change_view(&mut self, new_view: AppView) -> Result<()> {
         self.repaint_full()?;
         self.view = new_view;
         self.debounce_instant = Instant::now();
 
+        let character_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
+        let text_style = TextStyleBuilder::new().alignment(Alignment::Center).build();
         // Extra actions based on new view
         match self.view {
-            AppView::NameInput => {
-                self.debounce_duration = Duration::from_millis(100);
-                self.username_scratch.clone_from(&self.settings.username);
+            AppView::BadgeDisplay => {
+                self.set_display_to_vertical()?;
+                if let Some(addr) = self.settings.hr.saved.as_ref() {
+                    Text::with_text_style(
+                        "Trying to find\nsaved HR monitor!\nGiving up in 30s...\n\n\nTrash saved device\nto skip this.",
+                        Point::new(240 / 2, 120),
+                        character_style,
+                        text_style,
+                    )
+                    .draw(&mut self.display)?;
+                    let free_stack = unsafe {
+                        esp_idf_hal::sys::uxTaskGetStackHighWaterMark(std::ptr::null_mut())
+                    };
+                    info!("Stack Free: {free_stack}");
+                    // let (hr_tx, hr_rx) = mpsc::sync_channel(5);
+                    // self.hr_rx = Some(hr_rx);
+                    // let res =
+                    //     block_on(async { self.ble.connect_to_monitor(addr.mac, hr_tx).await });
+                    let monitor = MonitorHandle::build(addr.mac, self.delay)?;
+                    if let Ok(MonitorReply::Error(err)) = monitor
+                        .reply_rx
+                        .recv_timeout(std::time::Duration::from_secs(30))
+                    {
+                        Text::with_text_style(
+                            &format!("{err}"),
+                            Point::new(240 / 2, 120),
+                            character_style,
+                            text_style,
+                        )
+                        .draw(&mut self.display)?;
+                        self.delay.delay_ms(1000);
+                        panic!();
+                    }
+
+                    self.monitor = Some(monitor);
+                    // info!("{:?}", self.monitor)
+                }
+                info!("Done.");
+                self.clear_vertical()?;
             }
             AppView::MainMenu => {
                 self.ble.discovered.clear();
                 self.debounce_duration = Duration::from_millis(500);
             }
+            AppView::NameInput => {
+                self.debounce_duration = Duration::from_millis(100);
+                self.username_scratch.clone_from(&self.settings.username);
+            }
             AppView::HrSelect => {
-                let character_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
-                let text_style = TextStyleBuilder::new().alignment(Alignment::Center).build();
-
                 Text::with_text_style(
                     "Scanning for BLE HR Monitors...\nPlease wait 10s...",
                     Point::new(320 / 2, 240 / 2),
@@ -804,12 +1011,6 @@ where
                 // Repaint again since we drew here
                 self.repaint_full()?;
                 // self.change_view(AppView::MainMenu)?;
-            }
-            AppView::BadgeDisplay => {
-                if let Some(addr) = self.settings.hr.saved.as_ref() {
-                    block_on(async { self.ble.connect_to_monitor(addr.mac).await })?;
-                }
-                info!("Done.");
             }
             _ => (),
         }
@@ -860,6 +1061,25 @@ where
         let repaint = self.view_needs_painting;
         self.view_needs_painting = false;
         repaint
+    }
+    fn set_display_to_vertical(&mut self) -> Result<()> {
+        let new = Rotation::Deg0;
+        self.display
+            .set_orientation(Orientation::new().rotate(new))?;
+        Ok(())
+    }
+    fn set_display_to_horizontal(&mut self) -> Result<()> {
+        let new = Rotation::Deg90;
+        self.display
+            .set_orientation(Orientation::new().rotate(new))?;
+        Ok(())
+    }
+    /// Since `mipidsi::Display::set_orientation` is borked.
+    fn clear_vertical(&mut self) -> Result<()> {
+        self.set_display_to_horizontal()?;
+        self.display.clear(Rgb565::BLACK)?;
+        self.set_display_to_vertical()?;
+        Ok(())
     }
 }
 

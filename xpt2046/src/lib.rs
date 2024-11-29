@@ -16,14 +16,14 @@ pub use xpt2046::Xpt2046;
 
 // Cheers to all involved!
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum TouchKind {
     Start,
     Move,
     End,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TouchEvent {
     pub point: Point,
     pub kind: TouchKind,

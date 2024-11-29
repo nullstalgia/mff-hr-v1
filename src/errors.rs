@@ -2,8 +2,8 @@ pub type Result<T> = ::core::result::Result<T, AppError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
-    #[error("{0:?}")]
-    Display(display_interface::DisplayError),
+    #[error("{0}")]
+    Display(String),
     #[error(transparent)]
     Esp(#[from] esp_idf_sys::EspError),
     #[error(transparent)]
@@ -18,8 +18,17 @@ pub enum AppError {
     Ble(#[from] esp32_nimble::BLEError),
 }
 
-impl From<display_interface::DisplayError> for AppError {
-    fn from(value: display_interface::DisplayError) -> Self {
-        Self::Display(value)
+impl<SPI, DC> From<mipidsi::interface::SpiError<SPI, DC>> for AppError
+where
+    SPI: std::fmt::Debug,
+    DC: std::fmt::Debug,
+{
+    fn from(value: mipidsi::interface::SpiError<SPI, DC>) -> Self {
+        Self::Display(format!("{value:?}"))
     }
 }
+
+// impl From<display_interface::DisplayError> for AppError {
+// fn from(value: display_interface::DisplayError) -> Self {
+//     Self::Display(value)
+// }

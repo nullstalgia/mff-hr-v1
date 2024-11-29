@@ -491,6 +491,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "eg-seven-segment"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e7d2f54ed234b333c71865c641906175a0d58bf366534ba5b8ded74b524b87b"
+dependencies = [
+ "bitflags 2.6.0",
+ "embedded-graphics",
+]
+
+[[package]]
 name = "either"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1353,6 +1363,7 @@ dependencies = [
  "derivative",
  "display-interface",
  "display-interface-spi",
+ "eg-seven-segment",
  "embassy-time",
  "embedded-canvas",
  "embedded-graphics",
@@ -1370,6 +1381,7 @@ dependencies = [
  "serde_derive",
  "strum 0.26.3",
  "strum_macros 0.26.4",
+ "takeable",
  "thiserror 2.0.3",
  "xpt2046",
 ]
@@ -1398,10 +1410,8 @@ dependencies = [
 [[package]]
 name = "mipidsi"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44e2bbd372d8ae9ccd0fc6eb4d91742b971ed8149968bbc623f025506989bd30"
+source = "git+https://github.com/GrantM11235/mipidsi?branch=new-interface#566155270d9b26f9c162366157d807c784580499"
 dependencies = [
- "display-interface",
  "embedded-graphics-core",
  "embedded-hal 1.0.0",
  "heapless 0.8.0",
@@ -1926,6 +1936,12 @@ dependencies = [
  "quote",
  "syn 2.0.89",
 ]
+
+[[package]]
+name = "takeable"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7efe11d01772262041364ebf855e0c6c9e2bd0dd4f059083e540a5f1cda69477"
 
 [[package]]
 name = "tempfile"
