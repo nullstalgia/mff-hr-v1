@@ -224,7 +224,10 @@ impl MonitorHandle {
             .spawn(move || {
                 let mut actor = MonitorActor::build(addr).unwrap();
                 block_on(async {
-                    actor.connect(reply_tx).await.unwrap();
+                    let err_tx = reply_tx.clone();
+                    if let Err(e) = actor.connect(reply_tx).await {
+                        err_tx.send(MonitorReply::Error(e)).unwrap();
+                    };
                 });
                 loop {
                     if !actor.client.connected() {

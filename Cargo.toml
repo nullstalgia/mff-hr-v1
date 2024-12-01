@@ -35,18 +35,11 @@ embassy = [
     "esp-idf-svc/embassy-time-driver",
 ]
 
-# [patch.'https://github.com/esp-rs/esp-idf-svc']
-# esp-idf-svc = { path = "./target/patch/ad1c836" }
-
 [patch.crates-io]
 esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc", rev = "3f2ce04" }
 # esp-idf-svc = { path = "./target/patch/ad1c836" }
 # esp-idf-svc = { path = "../esp-idf-svc" }
 esp-idf-hal = { git = "https://github.com/esp-rs/esp-idf-hal", rev = "97c01ef" }
-
-# This crate gets patched before build
-# [package.metadata.patch]
-# crates = ["esp-idf-svc"]
 
 [dependencies]
 log = "0.4"
@@ -93,13 +86,14 @@ embassy-time = "0.3.2"
 # embedded-menu = "0.6.1"
 strum = "0.26"
 strum_macros = "0.26"
-embedded-iconoir = "0.2.3"
+embedded-iconoir = { version = "0.2.3", features = ["24px", "48px"] }
 thiserror = { version = "2", default-features = false }
 serde = "1.0.215"
 serde_derive = "1.0.215"
 derivative = "2.2.0"
 takeable = "0.2.2"
 eg-seven-segment = "0.2.0"
+embedded-plots = { git = "https://gitlab.com/mchodzikiewicz/embedded-plots", rev = "ecb86dd5" }
 
 [build-dependencies]
 embuild = { version = "0.32.0", features = ["espidf"] }

@@ -8,6 +8,7 @@ use eg_seven_segment::SevenSegmentStyleBuilder;
 use embassy_time::{Duration, Instant};
 use embedded_canvas::{CCanvasAt, Canvas, CanvasAt};
 use embedded_graphics::{
+    geometry::Point,
     image::Image,
     mono_font::{
         ascii::{FONT_10X20, FONT_6X10},
@@ -23,6 +24,7 @@ use embedded_graphics::{
 use embedded_hal::digital::OutputPin;
 use embedded_iconoir::prelude::IconoirNewIcon;
 
+use embedded_plots::curve::{Curve, PlotPoint};
 use esp_idf_hal::{delay::Delay, prelude::Peripherals, task::block_on};
 use log::*;
 use mipidsi::{
@@ -59,6 +61,8 @@ pub enum AppView {
 //     Heartrate,
 //     Both,
 // }
+
+const HR_HISTORY_AMOUNT: usize = 100;
 
 const INPUT_CHARS: &[char] = &[
     ' ', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R',
@@ -101,15 +105,18 @@ where
     ble: BleStuff<'a>,
 
     // hr_rx: Option<Receiver<MonitorStatus>>,
-    current_hr: Option<MonitorStatus>,
-    hr_bound: Rectangle,
+    // current_hr: Option<MonitorStatus>,
+    // hr_bound: Rectangle,
+    hr_history: Vec<PlotPoint>,
+    plot_bpm_high: u8,
+    plot_bpm_low: u8,
 
     username_scratch: String,
     settings: Settings,
 
     delay: Delay,
 
-    numeric_canvas: Canvas<BinaryColor>,
+    hr_canvas: Canvas<BinaryColor>,
 }
 
 impl<'a, DI, MODEL, RST> App<'a, DI, MODEL, RST>
@@ -151,13 +158,178 @@ where
             settings: Settings::littlefs_load()?,
             // ble_handle: BleHrHandle::build()?,
             ble: BleStuff::build(),
-            current_hr: None,
-            // hr_rx: None,
             monitor: None,
             delay,
-            hr_bound: Rectangle::default(),
-            numeric_canvas: Canvas::new(Size::new(100, 60)),
+            hr_canvas: Canvas::new(Size::new(240, 60)),
+            hr_history: Vec::with_capacity(HR_HISTORY_AMOUNT),
+            plot_bpm_high: 0,
+            plot_bpm_low: 0,
         })
+    }
+    fn badge_view(&mut self) -> Result<()> {
+        let font_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
+        // const HEART_ICON_BOUND: Rectangle = Rectangle::new(Point::new(), Size::new_equal(24));
+        // let mut numeric_canvas: CanvasAt<BinaryColor> =
+        //     CanvasAt::new(Point::new(71, 91), Size::new(100, 60));
+
+        const NUMERIC_BOUND: Rectangle = Rectangle::new(Point::new(0, 260), Size::new(240, 60));
+
+        let bpm_style = SevenSegmentStyleBuilder::new()
+            .digit_size(Size::new(10 * 3, 20 * 3)) // digits are 10x20 pixels
+            .digit_spacing(5) // 5px spacing between digits
+            .segment_width(5) // 5px wide segments
+            // .segment_color(Rgb565::RED)
+            .segment_color(BinaryColor::On)
+            .build();
+        let left_style = TextStyleBuilder::new().alignment(Alignment::Left).build();
+        let center_style = TextStyleBuilder::new().alignment(Alignment::Center).build();
+        if self.paint_check() {
+            let title_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
+            let heart_icon = embedded_iconoir::icons::size48px::health::Heart::new(BinaryColor::On);
+            // Text::with_text_style("Badge!", Point::new(240 / 2, 20), title_style, center_style)
+            // .draw(&mut self.display)?;
+            // _ = heart_icon.draw(&mut self.display.color_converted());
+            let image = Image::new(&heart_icon, Point::new(6, 6));
+            _ = image.draw(&mut self.hr_canvas);
+
+            self.display.set_pixels(
+                NUMERIC_BOUND.top_left.x as u16,
+                NUMERIC_BOUND.top_left.y as u16,
+                NUMERIC_BOUND.bottom_right().unwrap().x as u16,
+                NUMERIC_BOUND.bottom_right().unwrap().y as u16,
+                self.hr_canvas.pixels.iter().map(|p| match p {
+                    Some(BinaryColor::On) => Rgb565::RED,
+                    Some(BinaryColor::Off) => Rgb565::BLACK,
+                    None => Rgb565::BLACK,
+                }),
+            )?;
+
+            // self.display
+            //     .set_pixels(0, 260, 240, 320, std::iter::repeat(Rgb565::RED))?;
+            // Rectangle::new(Point::new(0, 200), Size::new(240, 120))
+            //     .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+            //     .draw(&mut self.display)?;
+        }
+        let mut rebuild_monitor = false;
+        if let Some(monitor) = &self.monitor {
+            let msg = monitor.reply_rx.try_recv();
+            // let text = format!("{msg:#?}");
+            match msg {
+                Ok(MonitorReply::MonitorStatus(status)) if status.heart_rate_bpm > 0 => {
+                    if self.plot_bpm_low == 0 && self.plot_bpm_high == 0 {
+                        self.plot_bpm_low = (status.heart_rate_bpm as u8).saturating_sub(5);
+                    } else {
+                        self.plot_bpm_low = self
+                            .plot_bpm_low
+                            .min((status.heart_rate_bpm as u8).saturating_sub(5));
+                    }
+
+                    self.plot_bpm_high = self
+                        .plot_bpm_high
+                        .max((status.heart_rate_bpm as u8).saturating_add(5));
+
+                    if self.hr_history.len() == self.hr_history.capacity() {
+                        self.hr_history.pop();
+                    }
+                    self.hr_history.insert(
+                        0,
+                        PlotPoint {
+                            x: 0,
+                            y: status.heart_rate_bpm as i32,
+                        },
+                    );
+
+                    self.hr_history
+                        .iter_mut()
+                        .enumerate()
+                        .for_each(|(index, point)| point.x = index as i32);
+                    // self.display.fill_solid(&self.hr_bound, Rgb565::BLACK)?;
+                    let bpm_string = format!(
+                        // "{}",
+                        "{:3}",
+                        status.heart_rate_bpm
+                    );
+                    let text = Text::with_text_style(
+                        &bpm_string,
+                        // Point::new(240 / 2, 150),
+                        // Point::new(0, 60),
+                        Point::new(60, 60),
+                        bpm_style,
+                        left_style,
+                    );
+
+                    // self.hr_bound = text.bounding_box();
+
+                    // info!("{:?}", self.hr_bound);
+
+                    let width = self.hr_canvas.size().width;
+                    self.hr_canvas
+                        .pixels
+                        .iter_mut()
+                        .enumerate()
+                        .for_each(|(index, color)| {
+                            let coords = (index % width as usize, index / width as usize);
+                            if color.is_some() && coords.0 > 50 {
+                                *color = Some(BinaryColor::Off);
+                            }
+                        });
+
+                    _ = text.draw(&mut self.hr_canvas);
+
+                    let mut curve = Curve::from_data(self.hr_history.as_slice());
+                    // let curve_list = [(curve, BinaryColor::On)];
+                    curve.x_range = 0..self.hr_history.capacity() as i32;
+                    curve.y_range = self.plot_bpm_low as i32..self.plot_bpm_high as i32;
+                    _ = curve
+                        .into_drawable_curve(&Point { x: 165, y: 0 }, &Point { x: 240, y: 60 })
+                        .set_color(BinaryColor::On)
+                        .set_thickness(3)
+                        .draw(&mut self.hr_canvas);
+
+                    self.display.set_pixels(
+                        NUMERIC_BOUND.top_left.x as u16,
+                        NUMERIC_BOUND.top_left.y as u16,
+                        NUMERIC_BOUND.bottom_right().unwrap().x as u16,
+                        NUMERIC_BOUND.bottom_right().unwrap().y as u16,
+                        self.hr_canvas.pixels.iter().map(|p| {
+                            match p {
+                                Some(BinaryColor::On) => Rgb565::RED,
+                                Some(BinaryColor::Off) => Rgb565::BLACK,
+                                None => Rgb565::BLACK,
+                                // Some(BinaryColor::Off) => Rgb565::new(50, 0, 0),
+                            }
+                            // if let Some(BinaryColor::On) = p {
+                            //     Rgb565::RED
+                            // } else {
+                            //     Rgb565::BLACK
+                            // }
+                        }),
+                    )?;
+
+                    // let plot = SinglePlot::new(
+                    // &curve_list,
+                    // Scale::RangeFraction(3),
+                    // Scale::RangeFraction(2),
+                    // )
+                    // .into_drawable(Point { x: 18, y: 2 }, Point { x: 120, y: 30 })
+                    // .set_color(BinaryColor::On);
+
+                    // plot.draw(&mut self.display.color_converted())?;
+                }
+                Ok(msg) => (),
+                Err(TryRecvError::Empty) => (),
+                Err(TryRecvError::Disconnected) => {
+                    // Monitor disconnected or errored!
+                    error!("Monitor disconnected or errored! Rebuilding...");
+                    rebuild_monitor = true;
+                }
+            }
+        }
+        if rebuild_monitor {
+            self.change_view(AppView::BadgeDisplay)?;
+        }
+
+        Ok(())
     }
     pub fn doodle(&mut self) -> Result<()> {
         const BACK_BUTTON_BOUND: Rectangle =
@@ -804,114 +976,6 @@ where
 
         Ok(())
     }
-    fn badge_view(&mut self) -> Result<()> {
-        let font_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
-        // let mut numeric_canvas: CanvasAt<BinaryColor> =
-        //     CanvasAt::new(Point::new(71, 91), Size::new(100, 60));
-
-        let bpm_style = SevenSegmentStyleBuilder::new()
-            .digit_size(Size::new(10 * 3, 20 * 3)) // digits are 10x20 pixels
-            .digit_spacing(5) // 5px spacing between digits
-            .segment_width(5) // 5px wide segments
-            // .segment_color(Rgb565::RED)
-            .segment_color(BinaryColor::On)
-            .build();
-        let left_style = TextStyleBuilder::new().alignment(Alignment::Left).build();
-        let center_style = TextStyleBuilder::new().alignment(Alignment::Center).build();
-        if self.paint_check() {
-            let title_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
-            Text::with_text_style("Badge!", Point::new(240 / 2, 20), title_style, center_style)
-                .draw(&mut self.display)?;
-        }
-
-        if let Some(monitor) = &self.monitor {
-            if let Ok(msg) = monitor.reply_rx.recv() {
-                // self.clear_vertical()?;
-                let text = format!("{msg:#?}");
-                info!("{text}");
-                // Text::with_text_style(&text, Point::new(240 / 2, 60), font_style, text_style)
-                //     .draw(&mut self.display)?;
-                match msg {
-                    MonitorReply::MonitorStatus(status) => {
-                        // self.display.fill_solid(&self.hr_bound, Rgb565::BLACK)?;
-                        let bpm_string = format!(
-                            "{}",
-                            // "{:03}",
-                            status.heart_rate_bpm
-                        );
-                        let text = Text::with_text_style(
-                            &bpm_string,
-                            // Point::new(240 / 2, 150),
-                            // Point::new(0, 60),
-                            Point::new(50, 60),
-                            bpm_style,
-                            center_style,
-                        );
-
-                        // self.hr_bound = text.bounding_box();
-
-                        // info!("{:?}", self.hr_bound);
-
-                        self.numeric_canvas.pixels.iter_mut().for_each(|pixel| {
-                            if pixel.is_some() {
-                                *pixel = Some(BinaryColor::Off);
-                            }
-                        });
-
-                        _ = text.draw(&mut self.numeric_canvas);
-
-                        const NUMERIC_BOUND: Rectangle =
-                            Rectangle::new(Point::new(71, 220), Size::new(100, 60));
-
-                        self.display.set_pixels(
-                            NUMERIC_BOUND.top_left.x as u16,
-                            NUMERIC_BOUND.top_left.y as u16,
-                            NUMERIC_BOUND.bottom_right().unwrap().x as u16,
-                            NUMERIC_BOUND.bottom_right().unwrap().y as u16,
-                            self.numeric_canvas.pixels.iter().map(|p| {
-                                match p {
-                                    Some(BinaryColor::On) => Rgb565::RED,
-                                    Some(BinaryColor::Off) => Rgb565::BLACK,
-                                    None => Rgb565::BLACK,
-                                    // Some(BinaryColor::Off) => Rgb565::new(50, 0, 0),
-                                }
-                                // if let Some(BinaryColor::On) = p {
-                                //     Rgb565::RED
-                                // } else {
-                                //     Rgb565::BLACK
-                                // }
-                            }),
-                        )?;
-
-                        // self.display.fill_contiguous(
-                        //     &Rectangle::new(Point::new(71, 180), Size::new(100, 60)),
-                        //     self.numeric_canvas.pixels.iter().map(|p| {
-                        //         match p {
-                        //             Some(BinaryColor::On) => Rgb565::RED,
-                        //             Some(BinaryColor::Off) => Rgb565::BLACK,
-                        //             None => Rgb565::BLACK,
-                        //             // Some(BinaryColor::Off) => Rgb565::new(50, 0, 0),
-                        //         }
-                        //         // if let Some(BinaryColor::On) = p {
-                        //         //     Rgb565::RED
-                        //         // } else {
-                        //         //     Rgb565::BLACK
-                        //         // }
-                        //     }),
-                        // )?;
-
-                        // self.numeric_canvas
-                        //     .place_at(Point::new(71, 91))
-                        //     .draw(&mut self.display.color_converted())?;
-                    }
-                    _ => (),
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     pub fn main_loop(&mut self) -> Result<()> {
         match self.view {
             AppView::Doodle => {
