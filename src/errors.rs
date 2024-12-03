@@ -6,6 +6,8 @@ pub enum AppError {
     Display(String),
     #[error(transparent)]
     Esp(#[from] esp_idf_sys::EspError),
+    #[error("{0}")]
+    Bmp(String),
     #[error(transparent)]
     Gpio(#[from] esp_idf_hal::gpio::GpioError),
     #[error(transparent)]
@@ -25,6 +27,12 @@ where
 {
     fn from(value: mipidsi::interface::SpiError<SPI, DC>) -> Self {
         Self::Display(format!("{value:?}"))
+    }
+}
+
+impl From<tinybmp::ParseError> for AppError {
+    fn from(value: tinybmp::ParseError) -> Self {
+        Self::Bmp(format!("{value:?}"))
     }
 }
 

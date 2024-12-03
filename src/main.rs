@@ -50,12 +50,72 @@ fn main() -> Result<()> {
     let free_stack = unsafe { esp_idf_hal::sys::uxTaskGetStackHighWaterMark(std::ptr::null_mut()) };
     info!("Stack Free: {free_stack}");
     let peripherals = Peripherals::take()?;
+
+    // Moved this to before display init, since otherwise a missing SD card caused a pthread stack overflow
+    let vspi = peripherals.spi3;
+    let sd_cs = peripherals.pins.gpio5;
+    let sd_sck = peripherals.pins.gpio18;
+    let sd_miso = peripherals.pins.gpio19;
+    let sd_mosi = peripherals.pins.gpio23;
+
+    // let config = SdCardConfiguration::new();
+    // config.command_timeout_ms = 100;
+
+    let spi_driver = SpiDriver::new(
+        vspi,
+        sd_sck,
+        sd_mosi,
+        Some(sd_miso),
+        &DriverConfig::default().dma(Dma::Auto(4096)),
+    )?;
+
+    // Keep it around or else it will be dropped and unmounted
+    // TODO put this into a func or something later
+    let mounted_fatfs: Option<MountedFatfs<_>> = {
+        match SdCardDriver::new_spi(
+            SdSpiHostDriver::new(
+                spi_driver,
+                Some(sd_cs),
+                AnyIOPin::none(),
+                AnyIOPin::none(),
+                AnyIOPin::none(),
+                None,
+            )?,
+            &SdCardConfiguration::new(),
+        ) {
+            Ok(driver) => {
+                match Fatfs::new_sdcard(0, driver)
+                    .and_then(|sd| MountedFatfs::mount(sd, "/sdcard", 4))
+                {
+                    Ok(fs) => Some(fs),
+                    Err(e) => {
+                        error!("Error mounting SD: {e}");
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Error mounting SD: {e}");
+                None
+            }
+        }
+    };
+
+    if mounted_fatfs.is_some() {
+        for file in fs::read_dir("/sdcard")? {
+            info!("{file:?}");
+        }
+        // fs::create_dir_all("/sdcard/gif")?;
+        fs::create_dir_all("/sdcard/bmp")?;
+    }
+
     let mut delay: Delay = Default::default();
     let io0 = {
         let pin = peripherals.pins.gpio0;
         let pin = PinDriver::input(pin)?;
         pin
     };
+
     // Waits a moment at startup to allow user to hold BOOT button
     // delay.delay_ms(1000);
     // If it's held down, littlefs will be formatted.
@@ -92,7 +152,6 @@ fn main() -> Result<()> {
         .unwrap();
     display.clear(Rgb565::BLACK)?;
     lcd_backlight.set_high()?;
-
     let touch_clk = {
         let pin = peripherals.pins.gpio25;
         let pin = PinDriver::output(pin)?;
@@ -171,7 +230,7 @@ fn main() -> Result<()> {
                         let blocking_send = event
                             .as_ref()
                             .map(|e| e.kind != TouchKind::Move)
-                            .unwrap_or(true);
+                            .unwrap_or(false);
                         if blocking_send && blocking_item.is_none() {
                             blocking_item = Some(event.clone());
                         }
@@ -197,48 +256,6 @@ fn main() -> Result<()> {
         })?;
 
     assert_eq!(unsafe { esp_idf_hal::sys::esp_task_wdt_deinit() }, 0);
-
-    let vspi = peripherals.spi3;
-    let sd_cs = peripherals.pins.gpio5;
-    let sd_sck = peripherals.pins.gpio18;
-    let sd_miso = peripherals.pins.gpio19;
-    let sd_mosi = peripherals.pins.gpio23;
-
-    let spi_driver = SpiDriver::new(
-        vspi,
-        sd_sck,
-        sd_mosi,
-        Some(sd_miso),
-        &DriverConfig::default().dma(Dma::Auto(4096)),
-    )?;
-
-    let sd_card_driver = SdCardDriver::new_spi(
-        SdSpiHostDriver::new(
-            spi_driver,
-            Some(sd_cs),
-            AnyIOPin::none(),
-            AnyIOPin::none(),
-            AnyIOPin::none(),
-            None,
-        )?,
-        &SdCardConfiguration::new(),
-    )?;
-
-    // Keep it around or else it will be dropped and unmounted
-    let mounted_fatfs: Option<MountedFatfs<_>> =
-        match MountedFatfs::mount(Fatfs::new_sdcard(0, sd_card_driver)?, "/sdcard", 4) {
-            Ok(fs) => Some(fs),
-            Err(e) => {
-                error!("Failed mounting SD: {e}");
-                None
-            }
-        };
-
-    if mounted_fatfs.is_some() {
-        for file in fs::read_dir("/sdcard")? {
-            info!("{file:?}");
-        }
-    }
 
     // // let mut last_point = None;
     // std::thread::Builder::new()

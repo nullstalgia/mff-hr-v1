@@ -1,5 +1,6 @@
 use std::{
     fmt::Debug,
+    fs,
     sync::mpsc::{self, Receiver, TryRecvError},
 };
 
@@ -117,6 +118,9 @@ where
     delay: Delay,
 
     hr_canvas: Canvas<BinaryColor>,
+    name_canvas: Canvas<BinaryColor>,
+
+    image_index: Option<usize>,
 }
 
 impl<'a, DI, MODEL, RST> App<'a, DI, MODEL, RST>
@@ -152,7 +156,7 @@ where
             // },
             last_touch: None,
             debounce_instant: Instant::now(),
-            debounce_duration: Duration::from_millis(100),
+            debounce_duration: Duration::from_millis(500),
             doodle_lines: Lines::default(),
             username_scratch: String::new(),
             settings: Settings::littlefs_load()?,
@@ -161,9 +165,11 @@ where
             monitor: None,
             delay,
             hr_canvas: Canvas::new(Size::new(240, 60)),
+            name_canvas: Canvas::new(Size::new(240, 20)),
             hr_history: Vec::with_capacity(HR_HISTORY_AMOUNT),
             plot_bpm_high: 0,
             plot_bpm_low: 0,
+            image_index: None,
         })
     }
     fn badge_view(&mut self) -> Result<()> {
@@ -183,6 +189,7 @@ where
             .build();
         let left_style = TextStyleBuilder::new().alignment(Alignment::Left).build();
         let center_style = TextStyleBuilder::new().alignment(Alignment::Center).build();
+
         if self.paint_check() {
             let title_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
             let heart_icon = embedded_iconoir::icons::size48px::health::Heart::new(BinaryColor::On);
@@ -203,6 +210,43 @@ where
                     None => Rgb565::BLACK,
                 }),
             )?;
+
+            let mut index = {
+                match &self.image_index {
+                    Some(index) => index + 1,
+                    None => 0,
+                }
+            };
+            self.image_index = Some(index);
+
+            use tinybmp::Bmp;
+
+            let bmp_path_accessable = fs::exists("/sdcard/BMP").unwrap_or(false);
+            if bmp_path_accessable {
+                let paths = fs::read_dir("/sdcard/BMP")?;
+                let bmp_files: Vec<_> = paths
+                    .filter_map(|entry| entry.ok())
+                    .filter(|entry| {
+                        entry
+                            .path()
+                            .extension()
+                            .map_or(false, |ext| ext.to_ascii_lowercase() == "bmp")
+                    })
+                    .collect();
+                if index >= bmp_files.len() {
+                    index = 0;
+                    self.image_index = None;
+                }
+                if let Some(random_file) = bmp_files.get(index) {
+                    debug!("Selected BMP: {:?}", random_file.path());
+                    debug!("Size: {:?}", fs::metadata(random_file.path())?.len());
+                    let bmp_data = fs::read(random_file.path())?;
+                    let bmp = Bmp::from_slice(&bmp_data)?;
+
+                    Image::with_center(&bmp, Point::new(240 / 2, (320 / 2) - 20))
+                        .draw(&mut self.display)?;
+                }
+            }
 
             // self.display
             //     .set_pixels(0, 260, 240, 320, std::iter::repeat(Rgb565::RED))?;
@@ -325,8 +369,27 @@ where
                 }
             }
         }
+
         if rebuild_monitor {
+            self.delay.delay_ms(10000);
             self.change_view(AppView::BadgeDisplay)?;
+        }
+
+        match self.touch() {
+            Some(TouchEvent {
+                point: new_point,
+                kind: TouchKind::Start,
+            }) => {
+                self.debounce_instant = Instant::now();
+            }
+            Some(TouchEvent {
+                point: new_point,
+                kind: TouchKind::Move,
+            }) => {
+                self.repaint_full()?;
+                self.debounce_instant = Instant::now();
+            }
+            _ => (),
         }
 
         Ok(())
@@ -1035,7 +1098,7 @@ where
                             text_style,
                         )
                         .draw(&mut self.display)?;
-                        self.delay.delay_ms(1000);
+                        self.delay.delay_ms(10000);
                         panic!();
                     }
 
@@ -1044,6 +1107,7 @@ where
                 }
                 info!("Done.");
                 self.clear_vertical()?;
+                self.debounce_duration = Duration::from_millis(5000);
             }
             AppView::MainMenu => {
                 self.ble.discovered.clear();
@@ -1078,7 +1142,7 @@ where
             }
             _ => (),
         }
-
+        while let Ok(_) = self.touch_rx.try_recv() {}
         Ok(())
     }
     fn touch(&mut self) -> &Option<TouchEvent> {

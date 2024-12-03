@@ -84,18 +84,26 @@ where
             return Ok(None);
         }
 
+        let is_start_event = self.touch_samples.len() == SAMPLE_THRESHOLD;
+
         let (x, y) = match self.calibration.as_ref() {
             Some(affine_offset) => {
                 // assert!(samples_at_capacity);
 
-                // Samples should be full by now.
+                // trash way of doing this
+                let skip = if is_start_event {
+                    SAMPLE_THRESHOLD - 1
+                } else {
+                    0
+                };
                 let sum = self
                     .touch_samples
                     .iter()
+                    .skip(skip)
                     .fold((0u32, 0u32), |(acc_x, acc_y), &(x, y)| {
                         (acc_x + x as u32, acc_y + y as u32)
                     });
-                let len = self.touch_samples.len() as u32;
+                let len = (self.touch_samples.len() - skip) as u32;
                 let averaged = (sum.0 / len, sum.1 / len);
 
                 let x: u16 = (affine_offset.alpha_x * averaged.0 as f64
@@ -113,7 +121,7 @@ where
         };
         let result = Some(TouchEvent {
             point: Point::new(x as i32, y as i32),
-            kind: if self.touch_samples.len() == SAMPLE_THRESHOLD {
+            kind: if is_start_event {
                 TouchKind::Start
             } else {
                 TouchKind::Move
