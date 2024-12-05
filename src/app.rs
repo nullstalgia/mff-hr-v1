@@ -1,6 +1,7 @@
 use std::{
     fmt::Debug,
     fs,
+    os::espidf,
     sync::mpsc::{self, Receiver, TryRecvError},
 };
 
@@ -165,19 +166,40 @@ where
             monitor: None,
             delay,
             hr_canvas: Canvas::new(Size::new(240, 60)),
-            name_canvas: Canvas::new(Size::new(240, 20)),
+            name_canvas: Canvas::new(Size::new(240, 40)),
             hr_history: Vec::with_capacity(HR_HISTORY_AMOUNT),
             plot_bpm_high: 0,
             plot_bpm_low: 0,
             image_index: None,
         })
     }
+    // fn custom_contiguous<I>(&mut self, area: &Rectangle, colors: I) -> Result<()>
+    // where
+    //     I: IntoIterator<Item = Rgb565>,
+    // {
+    //     self.display.set_pixels(
+    //         area.top_left.x as u16,
+    //         area.top_left.y as u16,
+    //         area.bottom_right().ok_or(AppError::BoundlessRectangle)?.x as u16,
+    //         area.bottom_right().ok_or(AppError::BoundlessRectangle)?.y as u16,
+    //         self.hr_canvas.pixels.iter().map(|p| match p {
+    //             Some(BinaryColor::On) => Rgb565::RED,
+    //             Some(BinaryColor::Off) => Rgb565::BLACK,
+    //             None => Rgb565::BLACK,
+    //         }),
+    //     )?;
+    //     Ok(())
+    // }
     fn badge_view(&mut self) -> Result<()> {
-        let font_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
+        let time = Instant::now().as_millis() as f32;
+        let oscillator_value = (time / 6520.0).sin().abs();
+        // info!("{oscillator_value}");
+        let font_style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
         // const HEART_ICON_BOUND: Rectangle = Rectangle::new(Point::new(), Size::new_equal(24));
         // let mut numeric_canvas: CanvasAt<BinaryColor> =
         //     CanvasAt::new(Point::new(71, 91), Size::new(100, 60));
 
+        const NAME_BOUND: Rectangle = Rectangle::new(Point::new(0, 0), Size::new(240, 40));
         const NUMERIC_BOUND: Rectangle = Rectangle::new(Point::new(0, 260), Size::new(240, 60));
 
         let bpm_style = SevenSegmentStyleBuilder::new()
@@ -190,26 +212,58 @@ where
         let left_style = TextStyleBuilder::new().alignment(Alignment::Left).build();
         let center_style = TextStyleBuilder::new().alignment(Alignment::Center).build();
 
-        if self.paint_check() {
-            let title_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
-            let heart_icon = embedded_iconoir::icons::size48px::health::Heart::new(BinaryColor::On);
-            // Text::with_text_style("Badge!", Point::new(240 / 2, 20), title_style, center_style)
-            // .draw(&mut self.display)?;
-            // _ = heart_icon.draw(&mut self.display.color_converted());
-            let image = Image::new(&heart_icon, Point::new(6, 6));
-            _ = image.draw(&mut self.hr_canvas);
+        self.name_canvas
+            .pixels
+            .iter_mut()
+            .for_each(|pixel| *pixel = None);
 
-            self.display.set_pixels(
-                NUMERIC_BOUND.top_left.x as u16,
-                NUMERIC_BOUND.top_left.y as u16,
-                NUMERIC_BOUND.bottom_right().unwrap().x as u16,
-                NUMERIC_BOUND.bottom_right().unwrap().y as u16,
-                self.hr_canvas.pixels.iter().map(|p| match p {
-                    Some(BinaryColor::On) => Rgb565::RED,
-                    Some(BinaryColor::Off) => Rgb565::BLACK,
-                    None => Rgb565::BLACK,
-                }),
-            )?;
+        let text = Text::with_text_style(
+            &self.settings.username,
+            // Point::new(240 / 2, 150),
+            // Point::new(0, 60),
+            Point::new(240 / 2, 15 + (20.0 * oscillator_value) as i32),
+            font_style,
+            center_style,
+        );
+
+        _ = text.draw(&mut self.name_canvas);
+
+        self.display.set_pixels(
+            NAME_BOUND.top_left.x as u16,
+            NAME_BOUND.top_left.y as u16,
+            NAME_BOUND.bottom_right().unwrap().x as u16,
+            NAME_BOUND.bottom_right().unwrap().y as u16,
+            self.name_canvas.pixels.iter().map(|p| match p {
+                Some(BinaryColor::On) => Rgb565::WHITE,
+                Some(BinaryColor::Off) => Rgb565::BLACK,
+                None => Rgb565::BLACK,
+            }),
+        )?;
+
+        if self.paint_check() {
+            // let title_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
+
+            if self.monitor.is_some() {
+                let heart_icon =
+                    embedded_iconoir::icons::size48px::health::Heart::new(BinaryColor::On);
+                // Text::with_text_style("Badge!", Point::new(240 / 2, 20), title_style, center_style)
+                // .draw(&mut self.display)?;
+                // _ = heart_icon.draw(&mut self.display.color_converted());
+                let image = Image::new(&heart_icon, Point::new(6, 6));
+                _ = image.draw(&mut self.hr_canvas);
+
+                self.display.set_pixels(
+                    NUMERIC_BOUND.top_left.x as u16,
+                    NUMERIC_BOUND.top_left.y as u16,
+                    NUMERIC_BOUND.bottom_right().unwrap().x as u16,
+                    NUMERIC_BOUND.bottom_right().unwrap().y as u16,
+                    self.hr_canvas.pixels.iter().map(|p| match p {
+                        Some(BinaryColor::On) => Rgb565::RED,
+                        Some(BinaryColor::Off) => Rgb565::BLACK,
+                        None => Rgb565::BLACK,
+                    }),
+                )?;
+            }
 
             let mut index = {
                 match &self.image_index {
@@ -218,7 +272,6 @@ where
                 }
             };
             self.image_index = Some(index);
-
             use tinybmp::Bmp;
 
             let bmp_path_accessable = fs::exists("/sdcard/BMP").unwrap_or(false);
@@ -384,7 +437,7 @@ where
             }
             Some(TouchEvent {
                 point: new_point,
-                kind: TouchKind::Move,
+                kind: TouchKind::Move | TouchKind::End,
             }) => {
                 self.repaint_full()?;
                 self.debounce_instant = Instant::now();
@@ -514,8 +567,8 @@ where
             }
 
             Text::with_text_style(
-                "To reset settings, hold BOOT _after_ tapping RST",
-                Point::new(160, 230),
+                "To clear settings,\nhold inner button _after_ powering on.",
+                Point::new(160, 220),
                 smol_char_style,
                 text_style,
             )
@@ -1073,7 +1126,7 @@ where
                 if let Some(addr) = self.settings.hr.saved.as_ref() {
                     Text::with_text_style(
                         "Trying to find\nsaved HR monitor!\nGiving up in 30s...\n\n\nTrash saved device\nto skip this.",
-                        Point::new(240 / 2, 120),
+                        Point::new(240 / 2, 100),
                         character_style,
                         text_style,
                     )
@@ -1107,7 +1160,7 @@ where
                 }
                 info!("Done.");
                 self.clear_vertical()?;
-                self.debounce_duration = Duration::from_millis(5000);
+                self.debounce_duration = Duration::from_millis(3000);
             }
             AppView::MainMenu => {
                 self.ble.discovered.clear();

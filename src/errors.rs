@@ -18,6 +18,8 @@ pub enum AppError {
     Postcard(#[from] postcard::Error),
     #[error(transparent)]
     Ble(#[from] esp32_nimble::BLEError),
+    #[error("Boundless rectangle")]
+    BoundlessRectangle,
 }
 
 impl<SPI, DC> From<mipidsi::interface::SpiError<SPI, DC>> for AppError
