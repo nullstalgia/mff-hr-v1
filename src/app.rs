@@ -34,6 +34,12 @@ use mipidsi::{
     models::Model,
     options::{Orientation, Rotation},
 };
+use serde::{Deserialize, Serialize};
+use strum::VariantArray;
+use u8g2_fonts::{
+    types::{FontColor, HorizontalAlignment, VerticalPosition},
+    FontRenderer,
+};
 use xpt2046::{TouchEvent, TouchKind};
 
 use crate::{
@@ -122,6 +128,7 @@ where
     name_canvas: Canvas<BinaryColor>,
 
     image_index: Option<usize>,
+    image_count: usize,
 }
 
 impl<'a, DI, MODEL, RST> App<'a, DI, MODEL, RST>
@@ -171,7 +178,17 @@ where
             plot_bpm_high: 0,
             plot_bpm_low: 0,
             image_index: None,
+            image_count: 0,
         })
+    }
+    pub fn load_name_from_sd(&mut self) -> Result<()> {
+        if !fs::exists("/sdcard/NAME.TXT")? {
+            info!("No name found in SD, writing!");
+            fs::write("/sdcard/NAME.TXT", &self.settings.username)?;
+            return Ok(());
+        }
+        self.settings.username = fs::read_to_string("/sdcard/NAME.TXT")?;
+        Ok(())
     }
     // fn custom_contiguous<I>(&mut self, area: &Rectangle, colors: I) -> Result<()>
     // where
@@ -192,12 +209,16 @@ where
     // }
     fn badge_view(&mut self) -> Result<()> {
         let time = Instant::now().as_millis() as f32;
-        let oscillator_value = (time / 6520.0).sin().abs();
+        let oscillator_value = (time / 650.0).sin().abs();
         // info!("{oscillator_value}");
-        let font_style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
+        // let font_style =
+        // MonoTextStyle::new(&u8g2_fonts::fonts::u8g2_font_fub30_tf, BinaryColor::On);
+        let font = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_fub25_tf>();
         // const HEART_ICON_BOUND: Rectangle = Rectangle::new(Point::new(), Size::new_equal(24));
         // let mut numeric_canvas: CanvasAt<BinaryColor> =
         //     CanvasAt::new(Point::new(71, 91), Size::new(100, 60));
+
+        // let font = FontRenderer::new::<fonts::u8g2_font_haxrcorp4089_t_cyrillic>();
 
         const NAME_BOUND: Rectangle = Rectangle::new(Point::new(0, 0), Size::new(240, 40));
         const NUMERIC_BOUND: Rectangle = Rectangle::new(Point::new(0, 260), Size::new(240, 60));
@@ -217,16 +238,26 @@ where
             .iter_mut()
             .for_each(|pixel| *pixel = None);
 
-        let text = Text::with_text_style(
-            &self.settings.username,
-            // Point::new(240 / 2, 150),
-            // Point::new(0, 60),
-            Point::new(240 / 2, 15 + (20.0 * oscillator_value) as i32),
-            font_style,
-            center_style,
-        );
+        // let text = Text::with_text_style(
+        //     &self.settings.username,
+        //     // Point::new(240 / 2, 150),
+        //     // Point::new(0, 60),
+        //     Point::new(240 / 2, 15 + (20.0 * oscillator_value) as i32),
+        //     font_style,
+        //     center_style,
+        // );
 
-        _ = text.draw(&mut self.name_canvas);
+        // _ = text.draw(&mut self.name_canvas);
+
+        font.render_aligned(
+            self.settings.username.as_str(),
+            Point::new(240 / 2, 25 + (10.0 * oscillator_value) as i32),
+            VerticalPosition::Baseline,
+            HorizontalAlignment::Center,
+            FontColor::Transparent(BinaryColor::On),
+            &mut self.name_canvas,
+        )
+        .unwrap();
 
         self.display.set_pixels(
             NAME_BOUND.top_left.x as u16,
@@ -242,6 +273,7 @@ where
 
         if self.paint_check() {
             // let title_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
+            // I don't like this positioning of this var but it works for now
 
             if self.monitor.is_some() {
                 let heart_icon =
@@ -273,32 +305,41 @@ where
             };
             self.image_index = Some(index);
             use tinybmp::Bmp;
+            use tinyqoi::Qoi;
+            use tinytga::Tga;
 
-            let bmp_path_accessable = fs::exists("/sdcard/BMP").unwrap_or(false);
-            if bmp_path_accessable {
-                let paths = fs::read_dir("/sdcard/BMP")?;
-                let bmp_files: Vec<_> = paths
+            let tga_path_accessable = fs::exists("/sdcard/QOI").unwrap_or(false);
+            if tga_path_accessable {
+                let paths = fs::read_dir("/sdcard/QOI")?;
+                let tga_files: Vec<_> = paths
                     .filter_map(|entry| entry.ok())
                     .filter(|entry| {
                         entry
                             .path()
                             .extension()
-                            .map_or(false, |ext| ext.to_ascii_lowercase() == "bmp")
+                            .map_or(false, |ext| ext.to_ascii_lowercase() == "qoi")
                     })
                     .collect();
-                if index >= bmp_files.len() {
+                self.image_count = tga_files.len();
+                if index >= self.image_count {
                     index = 0;
-                    self.image_index = None;
+                    self.image_index = Some(0);
                 }
-                if let Some(random_file) = bmp_files.get(index) {
-                    debug!("Selected BMP: {:?}", random_file.path());
+                info!("TGAs: {tga_files:?}, using {index}");
+                if let Some(random_file) = tga_files.get(index) {
+                    debug!("Selected QOI: {:?}", random_file.path());
                     debug!("Size: {:?}", fs::metadata(random_file.path())?.len());
                     let bmp_data = fs::read(random_file.path())?;
-                    let bmp = Bmp::from_slice(&bmp_data)?;
+                    let bmp = Qoi::new(&bmp_data)?;
 
-                    Image::with_center(&bmp, Point::new(240 / 2, (320 / 2) - 20))
-                        .draw(&mut self.display)?;
+                    Image::with_center(&bmp, Point::new(240 / 2, (320 / 2) - 10))
+                        .draw(&mut self.display.color_converted())?;
                 }
+                info!(
+                    "My code is running! Core: {:?}, Heap free: {}",
+                    esp_idf_hal::cpu::core(),
+                    unsafe { esp_idf_hal::sys::esp_get_free_heap_size() }
+                );
             }
 
             // self.display
@@ -428,19 +469,28 @@ where
             self.change_view(AppView::BadgeDisplay)?;
         }
 
+        let slideshow_enabled = self.settings.slideshow_length_sec != SlideshowLength::Off;
+        let image_count = self.image_count;
         match self.touch() {
             Some(TouchEvent {
                 point: new_point,
-                kind: TouchKind::Start,
+                kind: TouchKind::Start | TouchKind::End,
             }) => {
                 self.debounce_instant = Instant::now();
             }
             Some(TouchEvent {
                 point: new_point,
-                kind: TouchKind::Move | TouchKind::End,
+                kind: TouchKind::Move,
             }) => {
                 self.repaint_full()?;
                 self.debounce_instant = Instant::now();
+            }
+            None if slideshow_enabled && image_count > 1 => {
+                if self.debounce_instant.elapsed() > self.settings.slideshow_length_sec.into() {
+                    info!("does it ever happen?");
+                    self.repaint_full()?;
+                    self.debounce_instant = Instant::now();
+                }
             }
             _ => (),
         }
@@ -548,9 +598,12 @@ where
                 Some(options_offset),
                 // &FONT_10X20
             ) {
-                // info!("drawing {item} at {point}");
+                let mut button_text = item.to_string();
+                if matches!(item, MainMenu::Slideshow) {
+                    button_text.push_str(&format!(" ({})", self.settings.slideshow_length_sec));
+                }
                 if let Ok(point) = Text::new(
-                    &item.to_string(),
+                    &button_text,
                     point,
                     character_style,
                     // text_style,
@@ -622,6 +675,10 @@ where
                         MainMenu::NameInput => self.change_view(AppView::NameInput)?,
                         MainMenu::HrSelect => self.change_view(AppView::HrSelect)?,
                         MainMenu::Doodle => self.change_view(AppView::Doodle)?,
+                        MainMenu::Slideshow => {
+                            self.cycle_slideshow_length()?;
+                            self.settings.littlefs_save()?;
+                        }
                     }
                 } else {
                     info!("Touch item not found at {point}");
@@ -630,6 +687,26 @@ where
             }
             _ => (),
         }
+        Ok(())
+    }
+    fn cycle_slideshow_length(&mut self) -> Result<()> {
+        let Some(current_index) = SlideshowLength::VARIANTS
+            .iter()
+            .position(|p| *p == self.settings.slideshow_length_sec)
+        else {
+            self.settings.slideshow_length_sec = SlideshowLength::default();
+            self.repaint_full()?;
+            return Ok(());
+        };
+
+        let new_index = current_index + 1;
+
+        if let Some(new_len) = SlideshowLength::VARIANTS.get(new_index) {
+            self.settings.slideshow_length_sec = *new_len;
+        } else {
+            self.settings.slideshow_length_sec = SlideshowLength::default();
+        }
+        self.repaint_full()?;
         Ok(())
     }
     // awful hardcoded-ness
@@ -882,6 +959,10 @@ where
                 if is_save {
                     self.settings.username.clone_from(&self.username_scratch);
                     self.settings.littlefs_save()?;
+                    if fs::exists("/sdcard/NAME.TXT")? {
+                        info!("Writing name to SD!");
+                        fs::write("/sdcard/NAME.TXT", &self.settings.username)?;
+                    }
                 }
                 self.change_view(AppView::MainMenu)?;
             }
@@ -1139,28 +1220,44 @@ where
                     // self.hr_rx = Some(hr_rx);
                     // let res =
                     //     block_on(async { self.ble.connect_to_monitor(addr.mac, hr_tx).await });
-                    let monitor = MonitorHandle::build(addr.mac, self.delay)?;
-                    if let Ok(MonitorReply::Error(err)) = monitor
-                        .reply_rx
-                        .recv_timeout(std::time::Duration::from_secs(30))
-                    {
+
+                    let addr = block_on(async { self.ble.scan_for_connect(addr).await })?;
+
+                    if let Some(addr) = addr {
+                        let monitor = MonitorHandle::build(addr, self.delay)?;
+                        if let Ok(MonitorReply::Error(err)) = monitor
+                            .reply_rx
+                            .recv_timeout(std::time::Duration::from_secs(30))
+                        {
+                            self.clear_vertical()?;
+                            Text::with_text_style(
+                                &format!("{err}"),
+                                Point::new(240 / 2, 120),
+                                character_style,
+                                text_style,
+                            )
+                            .draw(&mut self.display)?;
+                            self.delay.delay_ms(10000);
+                            panic!();
+                        }
+
+                        self.monitor = Some(monitor);
+                        // info!("{:?}", self.monitor)
+                    } else {
+                        self.clear_vertical()?;
                         Text::with_text_style(
-                            &format!("{err}"),
+                            &format!("HR Monitor not found!"),
                             Point::new(240 / 2, 120),
                             character_style,
                             text_style,
                         )
                         .draw(&mut self.display)?;
-                        self.delay.delay_ms(10000);
-                        panic!();
+                        self.delay.delay_ms(5000);
                     }
-
-                    self.monitor = Some(monitor);
-                    // info!("{:?}", self.monitor)
                 }
                 info!("Done.");
                 self.clear_vertical()?;
-                self.debounce_duration = Duration::from_millis(3000);
+                self.debounce_duration = Duration::from_millis(1000);
             }
             AppView::MainMenu => {
                 self.ble.discovered.clear();
@@ -1320,9 +1417,57 @@ enum MainMenu {
     Start,
     #[strum(to_string = "Name Input")]
     NameInput,
+    #[strum(to_string = "Slideshow")]
+    Slideshow,
     #[strum(to_string = "BLE HR Monitor Selection")]
     HrSelect,
     Doodle,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    strum_macros::VariantArray,
+    strum_macros::Display,
+    Serialize,
+    Deserialize,
+)]
+pub enum SlideshowLength {
+    #[default]
+    Off,
+    #[strum(to_string = "5s")]
+    FiveSec,
+    #[strum(to_string = "10s")]
+    TenSec,
+    #[strum(to_string = "30s")]
+    ThirtySec,
+    #[strum(to_string = "1m")]
+    OneMin,
+    #[strum(to_string = "3m")]
+    ThreeMin,
+}
+
+impl From<SlideshowLength> for Duration {
+    fn from(value: SlideshowLength) -> Self {
+        match value {
+            SlideshowLength::Off => Duration::from_secs(0),
+            SlideshowLength::FiveSec => Duration::from_secs(5),
+            SlideshowLength::TenSec => Duration::from_secs(10),
+            SlideshowLength::ThirtySec => Duration::from_secs(30),
+            SlideshowLength::OneMin => Duration::from_secs(60),
+            SlideshowLength::ThreeMin => Duration::from_secs(60 * 3),
+        }
+    }
+}
+
+impl From<&SlideshowLength> for Duration {
+    fn from(value: &SlideshowLength) -> Self {
+        Self::from(*value)
+    }
 }
 
 // #[derive(Debug, Clone, Copy)]

@@ -1404,6 +1404,9 @@ dependencies = [
  "takeable",
  "thiserror 2.0.3",
  "tinybmp",
+ "tinyqoi",
+ "tinytga",
+ "u8g2-fonts",
  "xpt2046",
 ]
 
@@ -2025,6 +2028,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyqoi"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4de2a035998f73717bcbe9ce7d0ace9cc7e242371d19bea0a8ee25a531ffef62"
+dependencies = [
+ "embedded-graphics",
+]
+
+[[package]]
 name = "tinystr"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2032,6 +2044,16 @@ checksum = "9117f5d4db391c1cf6927e7bea3db74b9a1c1add8f7eda9ffd5364f40f57b82f"
 dependencies = [
  "displaydoc",
  "zerovec",
+]
+
+[[package]]
+name = "tinytga"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "477839bd612acb4d0551915eaf6eef8cc1b3a9dd58e18e9c2b746c78614a25d5"
+dependencies = [
+ "embedded-graphics",
+ "nom",
 ]
 
 [[package]]
@@ -2077,6 +2099,15 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "winnow 0.6.20",
+]
+
+[[package]]
+name = "u8g2-fonts"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a68775e2131c88974e3cc1da37060559090319ea140746cc1e7e7797646415c0"
+dependencies = [
+ "embedded-graphics-core",
 ]
 
 [[package]]

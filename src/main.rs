@@ -243,7 +243,10 @@ fn main() -> Result<()> {
                             }
                             // If it's full, try again next loop run
                             Err(TrySendError::Full(_event)) => (),
-                            Err(TrySendError::Disconnected(_event)) => panic!(),
+                            Err(TrySendError::Disconnected(_event)) => {
+                                delay.delay_ms(1000);
+                                panic!();
+                            }
                         }
                     }
 
@@ -282,6 +285,9 @@ fn main() -> Result<()> {
     let _ble_device = esp32_nimble::BLEDevice::take();
 
     let mut app = App::build(touch_rx, display, delay)?;
+    if mounted_fatfs.is_some() {
+        app.load_name_from_sd()?;
+    }
     let free_stack = unsafe { esp_idf_hal::sys::uxTaskGetStackHighWaterMark(std::ptr::null_mut()) };
     info!("Stack Free: {free_stack}");
     // app.change_view(crate::app::AppView::BadgeDisplay)?;

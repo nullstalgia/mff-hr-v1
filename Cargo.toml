@@ -96,6 +96,10 @@ eg-seven-segment = "0.2.0"
 embedded-plots = { git = "https://gitlab.com/mchodzikiewicz/embedded-plots", rev = "ecb86dd5" }
 # rand = { version = "0.8.5", default-features = false }
 tinybmp = "0.6.0"
+u8g2-fonts = "0.4.0"
+# memmap = "0.7.0"
+tinytga = "0.5.0"
+tinyqoi = "0.2.0"
 
 [build-dependencies]
 embuild = { version = "0.32.0", features = ["espidf"] }

@@ -146,6 +146,30 @@ impl<'a> BleStuff<'a> {
             // discovered_rx: None,
         }
     }
+    pub async fn scan_for_connect(&self, ident: &BleIdents) -> Result<Option<BLEAddress>> {
+        let mut ble_scan = BLEScan::new();
+        let addr: Option<BLEAddress> = ble_scan
+            .active_scan(true)
+            .interval(100)
+            .window(99)
+            .filter_duplicates(false)
+            .start(&self.host_device, 10000, |device, data| {
+                if device.addr().as_be_bytes() == ident.mac {
+                    Some(device.addr())
+                } else if let Some(name) = data.name() {
+                    if name == ident.name {
+                        Some(device.addr())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .await?;
+
+        Ok(addr)
+    }
     pub async fn scan_for_select(&self) -> Result<Monitors> {
         let mut ble_scan = BLEScan::new();
         let mut devices = Monitors::new();
@@ -166,6 +190,7 @@ impl<'a> BleStuff<'a> {
                     // I think this will always give me a blank name if it had the services?
                     // Unsure, need to look into how BLE advertising works.
                     devices.insert(address, data.name().unwrap_or_default().to_string());
+                    info!("Addr: {:?}", device.addr());
                 }
 
                 // Populate the discovered monitors's name in the map if it's empty
@@ -215,7 +240,7 @@ pub struct MonitorHandle {
 }
 
 impl MonitorHandle {
-    pub fn build(addr: [u8; 6], delay: Delay) -> Result<Self> {
+    pub fn build(addr: BLEAddress, delay: Delay) -> Result<Self> {
         // let (command_tx, command_rx) = mpsc::sync_channel::<BleHrCommand>(5);
         let (reply_tx, reply_rx) = mpsc::sync_channel::<MonitorReply>(5);
 
@@ -251,7 +276,7 @@ struct MonitorActor {
     // command_rx: Receiver<BleHrCommand>,
     // reply_tx: Takeable<SyncSender<MonitorReply>>,
     client: BLEClient,
-    address: [u8; 6],
+    address: BLEAddress,
     // delay: Delay,
 }
 
@@ -259,7 +284,7 @@ impl MonitorActor {
     pub fn build(
         // command_rx: Receiver<BleHrCommand>,
         // reply_tx: SyncSender<MonitorReply>,
-        target_addr: [u8; 6], // delay: Delay,
+        target_addr: BLEAddress, // delay: Delay,
     ) -> Result<Self> {
         let mut client = BLEClient::new();
         client.on_connect(|client| {
@@ -275,9 +300,7 @@ impl MonitorActor {
         })
     }
     async fn connect(&mut self, reply_tx: SyncSender<MonitorReply>) -> Result<()> {
-        let addr = BLEAddress::from_be_bytes(self.address, esp32_nimble::BLEAddressType::Random);
-
-        if let Err(e) = self.client.connect(&addr).await {
+        if let Err(e) = self.client.connect(&self.address).await {
             reply_tx.send(MonitorReply::Error(e.into())).unwrap();
             return Ok(());
         }

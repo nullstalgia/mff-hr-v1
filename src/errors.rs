@@ -7,7 +7,7 @@ pub enum AppError {
     #[error(transparent)]
     Esp(#[from] esp_idf_sys::EspError),
     #[error("{0}")]
-    Bmp(String),
+    Image(String),
     #[error(transparent)]
     Gpio(#[from] esp_idf_hal::gpio::GpioError),
     #[error(transparent)]
@@ -34,7 +34,19 @@ where
 
 impl From<tinybmp::ParseError> for AppError {
     fn from(value: tinybmp::ParseError) -> Self {
-        Self::Bmp(format!("{value:?}"))
+        Self::Image(format!("{value:?}"))
+    }
+}
+
+impl From<tinytga::ParseError> for AppError {
+    fn from(value: tinytga::ParseError) -> Self {
+        Self::Image(format!("{value:?}"))
+    }
+}
+
+impl From<tinyqoi::Error> for AppError {
+    fn from(value: tinyqoi::Error) -> Self {
+        Self::Image(format!("{value:?}"))
     }
 }
 
