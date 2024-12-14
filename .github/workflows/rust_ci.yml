@@ -47,15 +47,21 @@ jobs:
       # - name: Install Linux Dependencies
       #   run: sudo apt-get update && sudo apt-get install -y libudev-dev
       #   continue-on-error: true
-      # - name: Setup Linux Rust toolchain and cache
-      #   uses: actions-rust-lang/setup-rust-toolchain@v1.9.0
-      #   continue-on-error: true
+      - name: Setup Linux Rust toolchain and cache
+        uses: actions-rust-lang/setup-rust-toolchain@v1.9.0
+        continue-on-error: true
       # - name: Convert ELF to .bin
       #   run: |
       #     cargo install espflash --version 3.2.0 --target x86_64-unknown-linux-gnu
       #     ~/.cargo/bin/espflash save-image --chip esp32 target/xtensa-esp32-espidf/release/mff-hr-v1 target/xtensa-esp32-espidf/release/app.bin
       #     ~/.cargo/bin/espflash partition-table partitions.csv --to-binary -o target/xtensa-esp32-espidf/release/partitions-0x8000.bin
       #   continue-on-error: true
+      - name: Install Cargo Binstall
+        uses: cargo-bins/cargo-binstall@main
+      - name: Install espflash
+        run: cargo binstall espflash --version 3.2.0 --target x86_64-unknown-linux-gnu --no-confirm --force
+      - name: Build Release Binary
+        run: espflash save-image --chip esp32 --flash-size 4mb --partition-table partitions.csv --merge target/xtensa-esp32-espidf/release/mff-hr-v1 target/xtensa-esp32-espidf/release/out.bin
       - name: Archive Release artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -63,3 +69,4 @@ jobs:
           path: |
             partitions.csv
             target/xtensa-esp32-espidf/release/mff-hr-v1
+            target/xtensa-esp32-espidf/release/out.bin
