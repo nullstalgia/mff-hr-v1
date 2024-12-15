@@ -188,6 +188,7 @@ where
             return Ok(());
         }
         self.settings.username = fs::read_to_string("/sdcard/NAME.TXT")?;
+        self.settings.littlefs_save()?;
         Ok(())
     }
     // fn custom_contiguous<I>(&mut self, area: &Rectangle, colors: I) -> Result<()>
